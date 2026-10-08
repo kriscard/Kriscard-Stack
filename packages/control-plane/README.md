@@ -1,6 +1,6 @@
 # `@kriscard/control-plane`
 
-The durable Kriscard Stack control-plane package. T3 introduces its private immutable artifact store; later tasks add live Pi Durable state and the versioned API.
+The durable Kriscard Stack control-plane package. Approved artifacts are immutable files; the T4 runtime uses Pi Durable and SQLite for live command state. The versioned client API and worker adapters are later tasks.
 
 ## Artifact store
 
@@ -28,3 +28,9 @@ Legacy source files are retired only through a separate, explicit resumable migr
 ## Recovering an interrupted import
 
 Use the import's `migrationId` to call `store.resumeMigration(migrationId)`, then call `store.verify(reference)` to check the stored copy. If the old files should be removed, call `store.retireMigrationSource(migrationId)` separately. This only retires imported legacy files; `store.restore(backupDirectory)` copies a backup and always leaves it alone. Existing export destinations and store roots must already have private permissions (`0700`); the store will not change the permissions of an unrelated directory.
+
+## Live runtime (T4)
+
+`src/runtime/open.ts` opens one SQLite-backed Pi Durable Harness beneath the same private data root. A macOS `lockf` launch lock stays held until the Harness closes, so another process cannot open the authoritative state concurrently. SQLite files and sidecars must be regular `0600` files; the runtime sets a process-wide `077` umask for its lifetime. Run it in a dedicated Node process, not embedded in another application's process.
+
+`src/runtime/commands.ts` reserves idempotency keys and records task checkpoints, bounded retries, leases, and receipts in Pi Durable. Only the core replay classes `idempotent_with_key` and `manual_recovery` are supported so far. Adapters classify operations before submission. Idempotent adapters must use the supplied key to reconcile duplicate effects, including an interrupted final attempt. Dispatch deadlines abort and fence hung adapters; an unknown outcome becomes `needs_reconciliation` rather than being automatically dispatched again. In-process adapters must honor cancellation to avoid lingering external activity, even though a late result cannot overwrite a settled receipt. These are runtime primitives, not a public worker-launch API; no coding worker is launched by T4.
