@@ -41,7 +41,8 @@ export function canonicalizePotentialPath(inputPath: string): string {
 export function assertSafeRelativePath(relativePath: string): string {
   if (
     relativePath.length === 0 ||
-    path.isAbsolute(relativePath) ||
+    relativePath.startsWith("/") ||
+    /^[A-Za-z]:/.test(relativePath) ||
     relativePath.includes("\\") ||
     relativePath.includes("\0")
   ) {
@@ -54,7 +55,13 @@ export function assertSafeRelativePath(relativePath: string): string {
   const segments = relativePath.split("/");
   if (
     segments.some(
-      (segment) => segment === "" || segment === "." || segment === "..",
+      (segment) =>
+        segment === "" ||
+        segment === "." ||
+        segment === ".." ||
+        /[<>:"|?*\u0000-\u001f]/.test(segment) ||
+        /[. ]$/.test(segment) ||
+        /^\..+\.kriscard-tmp$/.test(segment),
     )
   ) {
     throw new ArtifactStoreError(
@@ -96,6 +103,7 @@ async function inspectDirectory(directory: string): Promise<void> {
     );
   }
   await chmod(directory, privateDirectoryMode);
+  await syncDirectoryEntry(directory);
 }
 
 export async function ensurePrivateDirectory(
@@ -117,8 +125,8 @@ export async function ensurePrivateDirectory(
     } catch (error) {
       if (!isAlreadyExists(error)) throw error;
     }
-    if (created) await syncDirectoryEntry(path.dirname(current));
     await inspectDirectory(current);
+    if (created) await syncDirectoryEntry(path.dirname(current));
   }
   return current;
 }
@@ -197,8 +205,8 @@ async function createPrivateRoot(resolvedRoot: string): Promise<void> {
     } catch (error) {
       if (!isAlreadyExists(error)) throw error;
     }
-    if (created) await syncDirectoryEntry(path.dirname(directory));
     await inspectDirectory(directory);
+    if (created) await syncDirectoryEntry(path.dirname(directory));
   }
   await inspectDirectory(resolvedRoot);
 }

@@ -860,6 +860,7 @@ async function removeAtomicTemporaryFiles(
     ...manifest.files.map((file) => file.path),
     "manifest.json",
   ]) {
+    await ensurePrivateDirectoryForFile(root, relativeFile);
     const destination = resolveWithin(root, relativeFile);
     const temporary = path.join(
       path.dirname(destination),

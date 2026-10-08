@@ -27,6 +27,7 @@ import {
   ArtifactStore,
   ArtifactStoreError,
   EvidenceArtifactContextSchema,
+  assertSafeRelativePath,
   defaultArtifactRoot,
   type EvidenceArtifactContext,
 } from "../src/artifacts/index.js";
@@ -100,6 +101,23 @@ test("requires branch association and an explicit PR lifecycle", () => {
     EvidenceArtifactContextSchema.validate({ ...context, pullRequest: null }),
     false,
   );
+});
+
+test("uses a host-neutral portable artifact path grammar", () => {
+  assert.equal(
+    assertSafeRelativePath("supporting/decision.md"),
+    "supporting/decision.md",
+  );
+  for (const unsafe of [
+    "C:/artifact.md",
+    "C:artifact.md",
+    "//server/share.md",
+    "folder\\artifact.md",
+    ".manifest.json.kriscard-tmp",
+    "folder/.evidence.md.kriscard-tmp",
+  ]) {
+    assert.throws(() => assertSafeRelativePath(unsafe), /Artifact path/);
+  }
 });
 
 test("canonicalizes configured roots reached through an ancestor symlink", async (t) => {
@@ -192,6 +210,24 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
       error instanceof ArtifactStoreError && error.code === "HASH_MISMATCH",
   );
 
+  const outsideExport = path.join(temporary, "outside-export");
+  const nestedSymlinkExport = path.join(temporary, "nested-symlink-export");
+  await mkdir(path.join(outsideExport, "notes"), { recursive: true });
+  const outsideTemporary = path.join(
+    outsideExport,
+    "notes",
+    ".decision.md.kriscard-tmp",
+  );
+  await writeFile(outsideTemporary, "must survive\n");
+  await mkdir(nestedSymlinkExport, { mode: 0o700 });
+  await symlink(outsideExport, path.join(nestedSymlinkExport, "supporting"));
+  await assert.rejects(
+    store.export(reference, nestedSymlinkExport),
+    (error) =>
+      error instanceof ArtifactStoreError && error.code === "SYMLINK_ESCAPE",
+  );
+  assert.equal(await readFile(outsideTemporary, "utf8"), "must survive\n");
+
   const restoredStore = new ArtifactStore({
     root: path.join(temporary, "restored-store"),
   });
@@ -263,6 +299,17 @@ test("rejects traversal and source or destination symlink escapes", async (t) =>
       revisionId,
       sourceDirectory: source,
       supportingFiles: ["../outside/secret.md"],
+      createdAt,
+    }),
+    (error) =>
+      error instanceof ArtifactStoreError && error.code === "INVALID_PATH",
+  );
+  await assert.rejects(
+    store.importApprovedRevision({
+      context,
+      revisionId,
+      sourceDirectory: source,
+      supportingFiles: [".spec.md.kriscard-tmp"],
       createdAt,
     }),
     (error) =>

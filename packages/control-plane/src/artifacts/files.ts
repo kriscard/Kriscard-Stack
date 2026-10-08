@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, open, rename, rm } from "node:fs/promises";
+import { open, rename, rm } from "node:fs/promises";
 import path from "node:path";
 
 import type * as z from "zod";
@@ -33,6 +33,7 @@ export async function writePrivateFileAtomic(
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
     handle = await open(temporary, "wx", privateFileMode);
+    await handle.chmod(privateFileMode);
     await handle.writeFile(content);
     await handle.sync();
     const completedHandle = handle;
@@ -40,7 +41,6 @@ export async function writePrivateFileAtomic(
     await completedHandle.close();
     await rename(temporary, destination);
     await syncDirectory(parent);
-    await chmod(destination, privateFileMode);
   } catch (error) {
     await handle?.close();
     await rm(temporary, { force: true });
