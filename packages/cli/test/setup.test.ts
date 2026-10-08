@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
+  chmod,
+  link,
+  stat,
   mkdir,
   mkdtemp,
   readFile,
@@ -118,6 +121,11 @@ test("clean setup asks before writes and a second run changes nothing", async (t
   assert.deepEqual(await readdir(options.home), []);
   const applied = await setup(options, async () => true);
   assert.equal(applied.applied, true);
+  assert.equal((await stat(applied.proposal.destination)).mode & 0o777, 0o600);
+  assert.equal(
+    (await stat(path.dirname(applied.proposal.destination))).mode & 0o777,
+    0o700,
+  );
   const first = await readFile(applied.proposal.destination, "utf8");
   const repeated = await setup(options, async () => {
     throw new Error("No-op must not request a write");
@@ -149,6 +157,72 @@ test("existing unrelated settings survive and an exact backup is kept", async (t
     await readFile(path.join(directory, backups[0]!), "utf8"),
     original,
   );
+  const entries = await readdir(directory);
+  assert.equal(
+    (
+      await setup(options, async () => {
+        throw new Error("An identical setup must not ask for confirmation");
+      })
+    ).applied,
+    false,
+  );
+  assert.deepEqual(await readdir(directory), entries);
+});
+
+test("setup refuses future versions and remote-enabled existing settings without altering them", async (t) => {
+  const { options } = await fixture(t);
+  const directory = path.join(options.home, ".config", "kriscard-stack");
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const destination = path.join(directory, "config.json");
+  for (const settings of [
+    { schemaVersion: 2 },
+    { schemaVersion: 1, remote: { enabled: true } },
+  ]) {
+    const original = JSON.stringify({ kriscardStack: settings });
+    await writeFile(destination, original, { mode: 0o600 });
+    await assert.rejects(
+      setup(options, async () => {
+        throw new Error("Unsafe configuration must not request confirmation");
+      }),
+      /unsupported version|separate security verification/,
+    );
+    assert.equal(await readFile(destination, "utf8"), original);
+  }
+});
+
+test("setup refuses shared directories, hard links, and occupied locks", async (t) => {
+  const { options, root } = await fixture(t);
+  const directory = path.join(options.home, ".config", "kriscard-stack");
+  const destination = path.join(directory, "config.json");
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await chmod(directory, 0o755);
+  await assert.rejects(
+    setup(options, async () => true),
+    /must be private/,
+  );
+  await chmod(directory, 0o700);
+  const outside = path.join(root, "unrelated.json");
+  await writeFile(outside, "{}", { mode: 0o600 });
+  await link(outside, destination);
+  await assert.rejects(
+    setup(options, async () => true),
+    /no hard links/,
+  );
+  assert.equal(await readFile(outside, "utf8"), "{}");
+  await rm(destination);
+  execFileSync("mkfifo", [destination]);
+  await assert.rejects(
+    setup(options, async () => true),
+    /small regular file/,
+  );
+  await rm(destination);
+  await mkdir(path.join(directory, ".setup-lock"));
+  await assert.rejects(
+    setup(options, async () => true),
+    (error) =>
+      error instanceof Error && "code" in error && error.code === "EEXIST",
+  );
+  assert.deepEqual(await readdir(directory), [".setup-lock"]);
 });
 
 test("explicit Stow source is edited, never a guessed dotfiles directory", async (t) => {
@@ -174,7 +248,7 @@ test("changed settings during confirmation and unexpected links cannot be overwr
   );
   await assert.rejects(
     setup(options, async () => {
-      await mkdir(path.dirname(destination), { recursive: true });
+      await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
       await writeFile(destination, '{"changed":true}');
       return true;
     }),

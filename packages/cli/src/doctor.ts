@@ -1,7 +1,10 @@
 import { execFile } from "node:child_process";
-import { readFile, readdir, realpath } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+
+import { catalog, type SkillEntry } from "./catalog.js";
+import { jsonRecord, readExisting } from "./configuration.js";
 
 const execute = promisify(execFile);
 
@@ -26,6 +29,7 @@ export type DoctorOptions = {
   generalRepository: string;
   /** Explicit installation roots; no dotfiles path is inferred. */
   installedSkillRoots?: readonly string[];
+  configurationFile?: string;
   platform?: NodeJS.Platform;
   nodeVersion?: string;
   probeTool?: (tool: Tool) => Promise<boolean>;
@@ -51,41 +55,6 @@ async function probeTool(tool: Tool): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-async function catalog(root: string): Promise<string[]> {
-  const visited = new Set<string>();
-  const names: string[] = [];
-  async function visit(directory: string): Promise<void> {
-    const canonical = await realpath(directory);
-    if (visited.has(canonical)) return;
-    visited.add(canonical);
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
-      const location = path.join(directory, entry.name);
-      if (entry.isDirectory()) await visit(location);
-      else if (entry.isFile() && entry.name === "SKILL.md") {
-        const content = await readFile(location, "utf8");
-        const frontmatter = content.match(
-          /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/,
-        )?.[1];
-        const raw = frontmatter
-          ?.split(/\r?\n/)
-          .find((line) => line.startsWith("name:"))
-          ?.slice(5)
-          .trim();
-        const name = raw?.replace(/^(?:"([^"]+)"|'([^']+)')$/, "$1$2");
-        if (!name || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name))
-          throw new Error("Invalid skill frontmatter");
-        names.push(name);
-      } else if (entry.isSymbolicLink()) {
-        // Installed skill directories are commonly symlinked by the Skills CLI.
-        await visit(location);
-      }
-    }
-  }
-  await visit(root);
-  return names;
 }
 
 /** Read-only diagnostics; no installs, config writes, daemon launches, or policy changes. */
@@ -173,7 +142,7 @@ export async function doctor(options: DoctorOptions): Promise<{
       fix: "Install Pi or Claude Code, or use plain skills without durable execution.",
     });
 
-  const catalogs = new Map<string, string[]>();
+  const catalogs = new Map<string, SkillEntry[]>();
   try {
     const manifest: unknown = JSON.parse(
       await readFile(
@@ -216,6 +185,8 @@ export async function doctor(options: DoctorOptions): Promise<{
           [
             "-C",
             options.generalRepository,
+            "-c",
+            "core.fsmonitor=false",
             "status",
             "--porcelain",
             "--",
@@ -278,10 +249,11 @@ export async function doctor(options: DoctorOptions): Promise<{
   }
   // Source owners must be unique. Installed roots are checked independently:
   // an installation of a source skill is expected, not a second source owner.
-  const sourceNames = [
+  const sourceSkills = [
     ...(catalogs.get("stack") ?? []),
     ...(catalogs.get("general") ?? []),
   ];
+  const sourceNames = sourceSkills.map((skill) => skill.name);
   const collisions = (names: string[]) => [
     ...new Set(names.filter((name, index) => names.indexOf(name) !== index)),
   ];
@@ -290,7 +262,7 @@ export async function doctor(options: DoctorOptions): Promise<{
       ...collisions(sourceNames),
       ...[...catalogs]
         .filter(([id]) => id.startsWith("installed-"))
-        .flatMap(([, names]) => collisions(names)),
+        .flatMap(([, skills]) => collisions(skills.map((skill) => skill.name))),
     ]),
   ];
   add(
@@ -308,8 +280,126 @@ export async function doctor(options: DoctorOptions): Promise<{
         },
   );
 
-  const remote = options.remote;
-  if (!remote || !remote.enabled) {
+  const expected = new Map(
+    sourceSkills.map((skill) => [skill.name, skill.sha256]),
+  );
+  const installedOwners = new Map<string, string>();
+  const installedConflicts = new Set<string>();
+  for (const [id, skills] of catalogs) {
+    if (!id.startsWith("installed-")) continue;
+    for (const skill of skills) {
+      const sourceHash = expected.get(skill.name);
+      const prior = installedOwners.get(skill.name);
+      if (
+        (sourceHash && sourceHash !== skill.sha256) ||
+        (prior && prior !== skill.sha256)
+      )
+        installedConflicts.add(skill.name);
+      installedOwners.set(skill.name, skill.sha256);
+    }
+  }
+  add(
+    installedConflicts.size
+      ? {
+          id: "installed-ownership",
+          status: "fail",
+          message: `Conflicting installed skills: ${[...installedConflicts].join(", ")}`,
+          fix: "Review the conflicting installation and reinstall the matching approved source with the Skills CLI; setup will not remove it.",
+        }
+      : {
+          id: "installed-ownership",
+          status: options.installedSkillRoots?.length ? "pass" : "warning",
+          message: options.installedSkillRoots?.length
+            ? "Inspected installed skills match their source owners"
+            : "Installed skill directories were not inspected",
+          ...(!options.installedSkillRoots?.length
+            ? {
+                fix: "Supply every skill directory used by the selected host with --installed-skills.",
+              }
+            : {}),
+        },
+  );
+
+  let remote = options.remote;
+  if (options.configurationFile) {
+    try {
+      const text = await readExisting(options.configurationFile);
+      if (text === undefined) {
+        add({
+          id: "configuration",
+          status: "warning",
+          message: "No setup settings have been saved",
+          fix: "Preview setup, then approve its proposed settings.",
+        });
+      } else {
+        const current = jsonRecord(text).kriscardStack;
+        if (
+          typeof current !== "object" ||
+          current === null ||
+          !("schemaVersion" in current) ||
+          current.schemaVersion !== 1 ||
+          !("mode" in current) ||
+          (current.mode !== "runtime" && current.mode !== "plain-skills") ||
+          !("host" in current) ||
+          (current.host !== "pi" && current.host !== "claude") ||
+          !("rawLogRetentionDays" in current) ||
+          typeof current.rawLogRetentionDays !== "number" ||
+          !Number.isSafeInteger(current.rawLogRetentionDays) ||
+          current.rawLogRetentionDays < 1 ||
+          current.rawLogRetentionDays > 3650
+        )
+          throw new Error("Invalid saved configuration");
+        if ("remote" in current) {
+          const configured = current.remote;
+          if (
+            typeof configured !== "object" ||
+            configured === null ||
+            !("enabled" in configured) ||
+            typeof configured.enabled !== "boolean"
+          )
+            throw new Error("Invalid remote configuration");
+          remote = {
+            enabled: configured.enabled,
+            binding:
+              "binding" in configured && typeof configured.binding === "string"
+                ? configured.binding
+                : "",
+            funnel: !("funnel" in configured) || configured.funnel !== false,
+            deviceApprovalVerified: false,
+            leastPrivilegeVerified: false,
+            strongIdentityVerified: false,
+            ...("applicationCredentialReference" in configured &&
+            typeof configured.applicationCredentialReference === "string"
+              ? {
+                  applicationCredentialReference:
+                    configured.applicationCredentialReference,
+                }
+              : {}),
+          };
+        }
+        add({
+          id: "configuration",
+          status: "pass",
+          message: "Saved settings use the supported schema",
+        });
+      }
+    } catch {
+      add({
+        id: "configuration",
+        status: "fail",
+        message: "Saved settings are malformed, unsupported, or unsafe to read",
+        fix: "Inspect the existing config and backup; repair it or upgrade the CLI. Doctor has not changed the file.",
+      });
+    }
+  }
+  if (!remote) {
+    add({
+      id: "remote",
+      status: "warning",
+      message: "Remote access was not inspected",
+      fix: "Keep remote access disabled until private-access settings and tailnet policy are separately verified.",
+    });
+  } else if (!remote.enabled) {
     add({
       id: "remote",
       status: "pass",
@@ -323,7 +413,9 @@ export async function doctor(options: DoctorOptions): Promise<{
       remote.deviceApprovalVerified &&
       remote.leastPrivilegeVerified &&
       remote.strongIdentityVerified &&
-      !!remote.applicationCredentialReference;
+      /^(?:env:[A-Z_][A-Z0-9_]*|keychain:[a-zA-Z0-9._/-]{1,256})$/.test(
+        remote.applicationCredentialReference ?? "",
+      );
     add(
       safe
         ? {

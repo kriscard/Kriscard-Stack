@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "vitest";
@@ -162,6 +169,87 @@ test("duplicate source owners and installed names block setup", async (t) => {
   assert.match(
     result.diagnostics.find((entry) => entry.id === "collisions")!.message,
     /duplicate/,
+  );
+});
+
+test("installed copies from both hosts agree, but a conflicting global name fails", async (t) => {
+  const { options, generalSkill, root } = await fixture(t);
+  const first = path.join(root, "pi-skills");
+  const second = path.join(root, "claude-skills");
+  await mkdir(first);
+  await mkdir(second);
+  await symlink(path.dirname(generalSkill), path.join(first, "test"));
+  await symlink(path.dirname(generalSkill), path.join(second, "test"));
+  const installedSkillRoots = [first, second];
+  assert.equal((await doctor({ ...options, installedSkillRoots })).ok, true);
+  await rm(path.join(second, "test"));
+  await mkdir(path.join(second, "test"));
+  await writeFile(
+    path.join(second, "test", "SKILL.md"),
+    "---\nname: test\n---\nConflicting version\n",
+  );
+  const conflict = await doctor({ ...options, installedSkillRoots });
+  assert.equal(conflict.ok, false);
+  assert.equal(
+    conflict.diagnostics.find((entry) => entry.id === "installed-ownership")!
+      .status,
+    "fail",
+  );
+  assert.equal(
+    (await doctor(options)).diagnostics.find(
+      (entry) => entry.id === "installed-ownership",
+    )!.status,
+    "warning",
+  );
+});
+
+test("doctor inspects saved settings without trusting persisted security claims or exposing values", async (t) => {
+  const { options, root } = await fixture(t);
+  const configurationFile = path.join(root, "config.json");
+  const settings = {
+    schemaVersion: 1,
+    mode: "plain-skills",
+    host: "pi",
+    rawLogRetentionDays: 30,
+  };
+  await writeFile(
+    configurationFile,
+    JSON.stringify({ kriscardStack: settings }),
+    { mode: 0o600 },
+  );
+  assert.equal((await doctor({ ...options, configurationFile })).ok, true);
+  const malformed = '{"privateDummyValue":"fixture-only",';
+  await writeFile(configurationFile, malformed);
+  const broken = await doctor({ ...options, configurationFile });
+  assert.equal(broken.ok, false);
+  assert.doesNotMatch(JSON.stringify(broken), /fixture-only/);
+  assert.equal(await readFile(configurationFile, "utf8"), malformed);
+  await writeFile(
+    configurationFile,
+    JSON.stringify({
+      kriscardStack: {
+        ...settings,
+        remote: {
+          enabled: true,
+          binding: "127.0.0.1",
+          funnel: false,
+          applicationCredentialReference: "env:STACK_TOKEN",
+          deviceApprovalVerified: true,
+          leastPrivilegeVerified: true,
+          strongIdentityVerified: true,
+        },
+      },
+    }),
+  );
+  const unverified = await doctor({ ...options, configurationFile });
+  assert.equal(unverified.ok, false);
+  assert.equal(
+    unverified.diagnostics.find((entry) => entry.id === "remote")!.status,
+    "fail",
+  );
+  assert.equal(
+    new Set(unverified.diagnostics.map((entry) => entry.id)).size,
+    unverified.diagnostics.length,
   );
 });
 
