@@ -6,6 +6,7 @@ import {
   transitionExecutionUnit,
   transitionWorkItem,
 } from "../src/index.js";
+import { passingEvidence } from "./helpers.js";
 
 const common = {
   reason: "Approved action",
@@ -110,7 +111,7 @@ test("work-item readiness requires a verifier and current evidence", () => {
         from: "verifying",
         to: "ready_for_human",
         actor: "implementer",
-        evidenceReadiness: { ready: true },
+        evidence: passingEvidence(),
       }),
     (error) =>
       error instanceof CoreInvariantError &&
@@ -130,19 +131,31 @@ test("work-item readiness requires a verifier and current evidence", () => {
       error.code === "INVALID_TRANSITION",
   );
 
+  const staleEvidence = passingEvidence();
+  staleEvidence.currentHeadSha = "c".repeat(40);
+  assert.throws(() =>
+    transitionWorkItem({
+      ...common,
+      from: "verifying",
+      to: "ready_for_human",
+      actor: "verifier",
+      evidence: staleEvidence,
+    }),
+  );
+
   assert.equal(
     transitionWorkItem({
       ...common,
       from: "verifying",
       to: "ready_for_human",
       actor: "verifier",
-      evidenceReadiness: { ready: true },
+      evidence: passingEvidence(),
     }).to,
     "ready_for_human",
   );
 });
 
-test("implementers cannot certify their own completion", () => {
+test("execution-unit readiness requires a verifier and current evidence", () => {
   assert.throws(
     () =>
       transitionExecutionUnit({
@@ -150,6 +163,39 @@ test("implementers cannot certify their own completion", () => {
         from: "verifying",
         to: "verified",
         actor: "implementer",
+        evidence: passingEvidence(),
+      }),
+    (error) =>
+      error instanceof CoreInvariantError &&
+      error.code === "UNAUTHORIZED_TRANSITION",
+  );
+
+  assert.throws(() =>
+    transitionExecutionUnit({
+      ...common,
+      from: "verifying",
+      to: "verified",
+      actor: "verifier",
+    }),
+  );
+
+  const verified = transitionExecutionUnit({
+    ...common,
+    from: "verifying",
+    to: "verified",
+    actor: "verifier",
+    evidence: passingEvidence(),
+  });
+  assert.equal(verified.subject, "execution_unit");
+
+  assert.throws(
+    () =>
+      transitionExecutionUnit({
+        ...common,
+        from: "verified",
+        to: "ready_for_human",
+        actor: "implementer",
+        evidence: passingEvidence(),
       }),
     (error) =>
       error instanceof CoreInvariantError &&
@@ -159,11 +205,12 @@ test("implementers cannot certify their own completion", () => {
   assert.equal(
     transitionExecutionUnit({
       ...common,
-      from: "verifying",
-      to: "verified",
+      from: "verified",
+      to: "ready_for_human",
       actor: "verifier",
-    }).subject,
-    "execution_unit",
+      evidence: passingEvidence(),
+    }).to,
+    "ready_for_human",
   );
 });
 

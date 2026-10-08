@@ -3,11 +3,11 @@ import test from "node:test";
 
 import {
   CoreInvariantError,
-  createId,
   HumanGateSchema,
   resolveHumanGate,
   type HumanGate,
 } from "../src/index.js";
+import { createId } from "./helpers.js";
 
 function gate(): HumanGate {
   return {

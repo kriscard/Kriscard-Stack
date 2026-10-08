@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  createId,
   validateExecutionGraph,
   type ExecutionUnit,
   type UnitId,
 } from "../src/index.js";
+import { createId } from "./helpers.js";
 
 const workItemId = createId("workItem");
 

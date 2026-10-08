@@ -16,6 +16,13 @@ export interface EvidenceReadiness {
   reasons: EvidenceReadinessReason[];
 }
 
+export interface EvidenceReadinessInput {
+  verdict: EvidenceVerdict;
+  currentHeadSha: string;
+  currentBaseSha: string;
+  implementerWorkerId: WorkerId;
+}
+
 const gitShaPattern = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
 const requiredCategories: EvidenceCategory[] = [
@@ -26,12 +33,9 @@ const requiredCategories: EvidenceCategory[] = [
 ];
 
 /** Checks whether a verdict is current, complete, and independently produced. */
-export function evaluateEvidenceReadiness(input: {
-  verdict: EvidenceVerdict;
-  currentHeadSha: string;
-  currentBaseSha: string;
-  implementerWorkerId: WorkerId;
-}): EvidenceReadiness {
+export function evaluateEvidenceReadiness(
+  input: EvidenceReadinessInput,
+): EvidenceReadiness {
   const reasons = new Set<EvidenceReadinessReason>();
   const { verdict } = input;
 

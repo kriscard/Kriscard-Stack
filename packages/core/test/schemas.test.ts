@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   CoreRecordJsonSchemas,
   CoreRecordSchemas,
-  createId,
+  createId as createCoreId,
   decodeRecord,
   EvidenceVerdictSchema,
   ProjectIdSchema,
@@ -13,13 +13,15 @@ import {
   TimestampSchema,
   WorkItemSchema,
 } from "../src/index.js";
+import { createId } from "./helpers.js";
 
-test("createId returns an opaque ID accepted by its schema", () => {
-  const id = createId("project");
+test("createId validates a caller-provided UUID", () => {
+  const id = createCoreId("project", "00000000-0000-4000-8000-000000000001");
 
   assert.match(id, /^prj_/);
   assert.equal(ProjectIdSchema.validate(id), true);
   assert.equal(ProjectIdSchema.validate(createId("unit")), false);
+  assert.throws(() => createCoreId("project", "not-a-uuid"));
 });
 
 test("decodeRecord rejects invalid records with bounded field errors", () => {

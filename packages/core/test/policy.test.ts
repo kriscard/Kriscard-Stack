@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  createId,
   evaluateBudgets,
   evaluateEvidenceReadiness,
   type BudgetResource,
@@ -10,6 +9,7 @@ import {
   type EvidenceCategory,
   type EvidenceVerdict,
 } from "../src/index.js";
+import { createId } from "./helpers.js";
 
 const resources: BudgetResource[] = [
   "tokens",

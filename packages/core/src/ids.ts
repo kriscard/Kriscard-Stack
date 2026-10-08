@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import * as z from "zod";
 
 export const idPrefixes = {
@@ -60,18 +59,18 @@ type IdByKind = {
 export type OpaqueId<Kind extends IdKind> = IdByKind[Kind];
 type AnyId = IdByKind[IdKind];
 
-/** Creates and validates a stable identifier for the requested domain kind. */
-export function createId(kind: "project"): ProjectId;
-export function createId(kind: "workItem"): WorkItemId;
-export function createId(kind: "revision"): RevisionId;
-export function createId(kind: "unit"): UnitId;
-export function createId(kind: "attempt"): AttemptId;
-export function createId(kind: "worker"): WorkerId;
-export function createId(kind: "machine"): MachineId;
-export function createId(kind: "gate"): GateId;
-export function createId(kind: "verdict"): VerdictId;
-export function createId(kind: IdKind): AnyId {
-  const value = `${idPrefixes[kind]}_${randomUUID()}`;
+/** Creates and validates a stable identifier from a caller-provided UUID. */
+export function createId(kind: "project", uuid: string): ProjectId;
+export function createId(kind: "workItem", uuid: string): WorkItemId;
+export function createId(kind: "revision", uuid: string): RevisionId;
+export function createId(kind: "unit", uuid: string): UnitId;
+export function createId(kind: "attempt", uuid: string): AttemptId;
+export function createId(kind: "worker", uuid: string): WorkerId;
+export function createId(kind: "machine", uuid: string): MachineId;
+export function createId(kind: "gate", uuid: string): GateId;
+export function createId(kind: "verdict", uuid: string): VerdictId;
+export function createId(kind: IdKind, uuid: string): AnyId {
+  const value = `${idPrefixes[kind]}_${uuid}`;
 
   switch (kind) {
     case "project":
