@@ -86,6 +86,7 @@ export const MigrationJournalSchema = z.looseObject({
   migrationId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,127}$/),
   status: z.enum(["copying", "committed", "retiring", "retired"]),
   sourceDirectory: z.string().min(1),
+  sourceDisposition: z.enum(["retire", "preserve"]).optional(),
   destinationRelative: z.string().min(1),
   manifest: ArtifactBundleManifestSchema,
   sources: z.array(MigrationSourceSchema).min(1),

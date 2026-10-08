@@ -190,6 +190,17 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
     migrationId: "revision-import",
     createdAt,
   });
+  await assert.rejects(
+    store.importApprovedRevision({
+      context,
+      revisionId: createId("revision", randomUUID()),
+      sourceDirectory: imported.directory,
+      createdAt,
+    }),
+    (error) =>
+      error instanceof ArtifactStoreError && error.code === "INVALID_PATH",
+  );
+
   const manifest = await store.verify({
     kind: "revision",
     repositoryFingerprint: context.repositoryFingerprint,
@@ -279,12 +290,51 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
   );
   assert.equal(await readFile(outsideTemporary, "utf8"), "must survive\n");
 
-  const restoredStore = new ArtifactStore({
-    root: path.join(temporary, "restored-store"),
-  });
+  const restoredRoot = path.join(temporary, "restored-store");
+  const restoredStore = new ArtifactStore({ root: restoredRoot });
   const restored = await restoredStore.restore(exportDirectory);
 
   assert.deepEqual(restored.manifest, manifest);
+  assert.equal(
+    await readFile(path.join(restored.directory, "spec.md"), "utf8"),
+    "# Specification\n",
+  );
+  await assert.rejects(
+    restoredStore.retireMigrationSource(restored.migrationId),
+    (error) =>
+      error instanceof ArtifactStoreError &&
+      error.code === "MIGRATION_CONFLICT",
+  );
+  assert.equal(
+    await readFile(path.join(exportDirectory, "spec.md"), "utf8"),
+    "# Specification\n",
+  );
+  await assert.rejects(
+    restoredStore.restore(restored.directory),
+    (error) =>
+      error instanceof ArtifactStoreError && error.code === "INVALID_PATH",
+  );
+
+  const restoreJournalPath = path.join(
+    restoredRoot,
+    ".migrations",
+    `${restored.migrationId}.json`,
+  );
+  const unsafeJournal = JSON.parse(
+    await readFile(restoreJournalPath, "utf8"),
+  ) as { sourceDirectory: string; sourceDisposition: string };
+  unsafeJournal.sourceDirectory = restored.directory;
+  unsafeJournal.sourceDisposition = "retire";
+  await writeFile(
+    restoreJournalPath,
+    `${JSON.stringify(unsafeJournal, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  await assert.rejects(
+    restoredStore.retireMigrationSource(restored.migrationId),
+    (error) =>
+      error instanceof ArtifactStoreError && error.code === "INVALID_PATH",
+  );
   assert.equal(
     await readFile(path.join(restored.directory, "spec.md"), "utf8"),
     "# Specification\n",

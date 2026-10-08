@@ -105,6 +105,7 @@ export interface StoredBundle {
 
 interface PreparedBundle {
   sourceDirectory: string;
+  sourceDisposition: "retire" | "preserve";
   destinationRelative: string;
   manifest: ArtifactBundleManifest;
   sources: MigrationSource[];
@@ -148,6 +149,7 @@ export class ArtifactStore {
       })),
     ];
     const sourceDirectory = canonicalizePotentialPath(request.sourceDirectory);
+    this.assertExternalSourceDirectory(sourceDirectory);
     const files = await this.inspectSources(sourceDirectory, sources);
     const approvalPath = await assertSafeSourceFile(
       sourceDirectory,
@@ -187,6 +189,7 @@ export class ArtifactStore {
     };
     const prepared: PreparedBundle = {
       sourceDirectory,
+      sourceDisposition: "retire",
       destinationRelative: this.destinationRelative(manifest),
       manifest: ArtifactBundleManifestSchema.parse(manifest),
       sources,
@@ -213,6 +216,7 @@ export class ArtifactStore {
       storedPath: sourcePath,
     }));
     const sourceDirectory = canonicalizePotentialPath(request.sourceDirectory);
+    this.assertExternalSourceDirectory(sourceDirectory);
     const files = await this.inspectSources(sourceDirectory, sources);
     const manifest: EvidenceBundleManifest = {
       schemaVersion: 1,
@@ -225,6 +229,7 @@ export class ArtifactStore {
     };
     const prepared: PreparedBundle = {
       sourceDirectory,
+      sourceDisposition: "retire",
       destinationRelative: this.destinationRelative(manifest),
       manifest: ArtifactBundleManifestSchema.parse(manifest),
       sources,
@@ -321,9 +326,11 @@ export class ArtifactStore {
   async restore(exportDirectory: string): Promise<StoredBundle> {
     await this.initialize();
     const sourceDirectory = canonicalizePotentialPath(exportDirectory);
+    this.assertExternalSourceDirectory(sourceDirectory);
     const manifest = await this.verifyBundleAt(sourceDirectory);
     const prepared: PreparedBundle = {
       sourceDirectory,
+      sourceDisposition: "preserve",
       destinationRelative: this.destinationRelative(manifest),
       manifest,
       sources: manifest.files.map((file) => ({
@@ -336,6 +343,15 @@ export class ArtifactStore {
       prepared,
       `restore-${sha256(Buffer.from(restoreIdentity)).slice(0, 24)}`,
     );
+  }
+
+  private assertExternalSourceDirectory(sourceDirectory: string): void {
+    if (pathsOverlap(sourceDirectory, this.root)) {
+      throw new ArtifactStoreError(
+        "INVALID_PATH",
+        "Artifact sources must be outside the private store",
+      );
+    }
   }
 
   private async inspectSources(
@@ -386,6 +402,7 @@ export class ArtifactStore {
         migrationId,
         status: "committed",
         sourceDirectory: prepared.sourceDirectory,
+        sourceDisposition: prepared.sourceDisposition,
         destinationRelative: prepared.destinationRelative,
         manifest: prepared.manifest,
         sources: prepared.sources,
@@ -402,6 +419,7 @@ export class ArtifactStore {
       migrationId,
       status: "copying",
       sourceDirectory: prepared.sourceDirectory,
+      sourceDisposition: prepared.sourceDisposition,
       destinationRelative: prepared.destinationRelative,
       manifest: prepared.manifest,
       sources: prepared.sources,
@@ -543,6 +561,13 @@ export class ArtifactStore {
     initialJournal: MigrationJournal,
   ): Promise<StoredBundle> {
     let journal = initialJournal;
+    if (journal.sourceDisposition !== "retire") {
+      throw new ArtifactStoreError(
+        "MIGRATION_CONFLICT",
+        `Source retirement is not allowed for this operation: ${journal.migrationId}`,
+      );
+    }
+    this.assertExternalSourceDirectory(journal.sourceDirectory);
     const destination = resolveWithin(this.root, journal.destinationRelative);
     const manifest = await this.verifyBundleAt(destination, journal.manifest);
     if (journal.status === "retired") {
@@ -868,6 +893,7 @@ function journalsMatchPrepared(
 ): boolean {
   return (
     journal.sourceDirectory === prepared.sourceDirectory &&
+    journal.sourceDisposition === prepared.sourceDisposition &&
     journal.destinationRelative === prepared.destinationRelative &&
     comparableManifest(journal.manifest) ===
       comparableManifest(prepared.manifest) &&
