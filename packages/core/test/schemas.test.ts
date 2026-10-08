@@ -6,6 +6,7 @@ import {
   CoreRecordSchemas,
   createId,
   decodeRecord,
+  EvidenceVerdictSchema,
   ProjectIdSchema,
   ProjectSchema,
 } from "../src/index.js";
@@ -46,6 +47,24 @@ test("decodeRecord retains unknown additive fields", () => {
   assert.deepEqual(
     (decoded as typeof decoded & { futureField: unknown }).futureField,
     { retained: true },
+  );
+});
+
+test("evidence records require the verified base SHA", () => {
+  assert.throws(() =>
+    decodeRecord(EvidenceVerdictSchema, {
+      schemaVersion: 1,
+      id: createId("verdict"),
+      unitId: createId("unit"),
+      requirementIds: ["R1"],
+      evidenceIds: ["V1"],
+      verifierWorkerId: createId("worker"),
+      headSha: "a".repeat(40),
+      categoryResults: [],
+      artifactReferences: [],
+      verdict: "verified",
+      createdAt: "2026-10-08T00:00:00Z",
+    }),
   );
 });
 
@@ -167,6 +186,7 @@ test("every core record schema accepts a representative record", () => {
       evidenceIds: ["V1"],
       verifierWorkerId: workerId,
       headSha: sha,
+      baseSha: sha,
       categoryResults: [
         {
           category: "repository_checks",

@@ -25,7 +25,7 @@ const requiredCategories: EvidenceCategory[] = [
 export function evaluateEvidenceReadiness(input: {
   verdict: EvidenceVerdict;
   currentHeadSha: string;
-  currentBaseSha?: string;
+  currentBaseSha: string;
   implementerWorkerId: WorkerId;
 }): EvidenceReadiness {
   const reasons = new Set<EvidenceReadinessReason>();
@@ -33,12 +33,7 @@ export function evaluateEvidenceReadiness(input: {
 
   if (verdict.verdict !== "verified") reasons.add("VERDICT_NOT_VERIFIED");
   if (verdict.headSha !== input.currentHeadSha) reasons.add("STALE_HEAD");
-  if (
-    input.currentBaseSha !== undefined &&
-    verdict.baseSha !== input.currentBaseSha
-  ) {
-    reasons.add("STALE_BASE");
-  }
+  if (verdict.baseSha !== input.currentBaseSha) reasons.add("STALE_BASE");
   if (verdict.verifierWorkerId === input.implementerWorkerId) {
     reasons.add("IMPLEMENTER_SELF_VERIFICATION");
   }

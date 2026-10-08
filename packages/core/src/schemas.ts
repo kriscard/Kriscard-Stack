@@ -275,7 +275,7 @@ export const EvidenceVerdictSchema = Type.Object({
   }),
   verifierWorkerId: WorkerIdSchema,
   headSha: GitShaSchema,
-  baseSha: Type.Optional(GitShaSchema),
+  baseSha: GitShaSchema,
   categoryResults: Type.Array(EvidenceCategoryResultSchema, { minItems: 1 }),
   artifactReferences: Type.Array(Type.String({ minLength: 1 })),
   verdict: Type.Union([
@@ -305,9 +305,13 @@ export const HumanGateSchema = Type.Object({
   ]),
   createdBy: ActorSchema,
   createdAt: TimestampSchema,
-  resolvedAt: Type.Optional(TimestampSchema),
-  resolution: Type.Optional(Type.String({ minLength: 1 })),
-  resolvedBy: Type.Optional(Type.Literal("human")),
+  resolution: Type.Optional(
+    Type.Object({
+      decision: Type.String({ minLength: 1 }),
+      resolvedAt: TimestampSchema,
+      resolvedBy: Type.Literal("human"),
+    }),
+  ),
 });
 export type HumanGate = Static<typeof HumanGateSchema>;
 

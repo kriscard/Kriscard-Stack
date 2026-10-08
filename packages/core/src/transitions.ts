@@ -36,7 +36,6 @@ const workItemTransitions: Record<WorkItemState, readonly WorkItemState[]> = {
     "requirements_review",
     "design_review",
     "plan_review",
-    "approved",
     "queued",
     "cancelled",
   ],

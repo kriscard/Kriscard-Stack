@@ -66,3 +66,46 @@ test("cycles fail without marking units outside the cycle", () => {
 
   assert.deepEqual(new Set(cycleIds), new Set([first.id, second.id]));
 });
+
+test("stack parents must exist, differ from the child, and be dependencies", () => {
+  const selfParent = unit("T1", "V1");
+  selfParent.stackParentUnitId = selfParent.id;
+
+  const missingParent = unit("T2", "V2");
+  missingParent.stackParentUnitId = createId("unit");
+
+  const parent = unit("T3", "V3");
+  const unrelatedChild = unit("T4", "V4");
+  unrelatedChild.stackParentUnitId = parent.id;
+
+  const result = validateExecutionGraph([
+    selfParent,
+    missingParent,
+    parent,
+    unrelatedChild,
+  ]);
+
+  assert.deepEqual(
+    new Set(result.issues.map(({ code }) => code)),
+    new Set([
+      "SELF_STACK_PARENT",
+      "MISSING_STACK_PARENT",
+      "STACK_PARENT_NOT_DEPENDENCY",
+    ]),
+  );
+});
+
+test("stack ancestry cycles fail", () => {
+  const first = unit("T1", "V1");
+  const second = unit("T2", "V2");
+  first.dependencies = [second.id];
+  first.stackParentUnitId = second.id;
+  second.dependencies = [first.id];
+  second.stackParentUnitId = first.id;
+
+  const stackCycleIds = validateExecutionGraph([first, second])
+    .issues.filter(({ code }) => code === "STACK_CYCLE")
+    .map(({ unitId }) => unitId);
+
+  assert.deepEqual(new Set(stackCycleIds), new Set([first.id, second.id]));
+});

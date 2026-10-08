@@ -49,6 +49,19 @@ test("work items cannot skip approved stages", () => {
       error instanceof CoreInvariantError &&
       error.code === "INVALID_TRANSITION",
   );
+
+  assert.throws(
+    () =>
+      transitionWorkItem({
+        ...common,
+        from: "paused",
+        to: "approved",
+        actor: "system",
+      }),
+    (error) =>
+      error instanceof CoreInvariantError &&
+      error.code === "INVALID_TRANSITION",
+  );
 });
 
 test("implementers cannot certify their own completion", () => {

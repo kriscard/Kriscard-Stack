@@ -9,7 +9,8 @@ It owns:
 - actor rules for approval, verification, and acceptance;
 - execution-graph validation;
 - hierarchical budget evaluation;
-- exact-commit evidence readiness.
+- exact head-and-base evidence readiness;
+- atomic, human-only gate resolution.
 
 It performs no filesystem, network, Git, process, or UI work. Those effects belong behind later adapter seams.
 

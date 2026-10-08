@@ -6,6 +6,10 @@ export type GraphIssueCode =
   | "MISSING_DEPENDENCY"
   | "SELF_DEPENDENCY"
   | "CYCLE"
+  | "MISSING_STACK_PARENT"
+  | "SELF_STACK_PARENT"
+  | "STACK_PARENT_NOT_DEPENDENCY"
+  | "STACK_CYCLE"
   | "DUPLICATE_TASK_OWNER"
   | "DUPLICATE_EVIDENCE_OWNER";
 
@@ -78,6 +82,28 @@ export function validateExecutionGraph(
         });
       }
     }
+
+    const stackParent = unit.stackParentUnitId;
+    if (!stackParent) continue;
+    if (stackParent === unit.id) {
+      issues.push({
+        code: "SELF_STACK_PARENT",
+        unitId: unit.id,
+        relatedId: stackParent,
+      });
+    } else if (!byId.has(stackParent)) {
+      issues.push({
+        code: "MISSING_STACK_PARENT",
+        unitId: unit.id,
+        relatedId: stackParent,
+      });
+    } else if (!unit.dependencies.includes(stackParent)) {
+      issues.push({
+        code: "STACK_PARENT_NOT_DEPENDENCY",
+        unitId: unit.id,
+        relatedId: stackParent,
+      });
+    }
   }
 
   const visited = new Set<UnitId>();
@@ -106,6 +132,35 @@ export function validateExecutionGraph(
   for (const unitId of byId.keys()) visit(unitId);
   for (const unitId of cycleMembers) {
     issues.push({ code: "CYCLE", unitId });
+  }
+
+  const stackVisited = new Set<UnitId>();
+  const stackActive = new Set<UnitId>();
+  const ancestry: UnitId[] = [];
+  const stackCycleMembers = new Set<UnitId>();
+
+  function visitStack(unitId: UnitId): void {
+    if (stackActive.has(unitId)) {
+      const cycleStart = ancestry.indexOf(unitId);
+      for (const member of ancestry.slice(cycleStart)) {
+        stackCycleMembers.add(member);
+      }
+      return;
+    }
+    if (stackVisited.has(unitId)) return;
+
+    stackActive.add(unitId);
+    ancestry.push(unitId);
+    const parent = byId.get(unitId)?.stackParentUnitId;
+    if (parent && parent !== unitId && byId.has(parent)) visitStack(parent);
+    ancestry.pop();
+    stackActive.delete(unitId);
+    stackVisited.add(unitId);
+  }
+
+  for (const unitId of byId.keys()) visitStack(unitId);
+  for (const unitId of stackCycleMembers) {
+    issues.push({ code: "STACK_CYCLE", unitId });
   }
 
   return { valid: issues.length === 0, issues };
