@@ -270,26 +270,41 @@ export class ArtifactStore {
     const manifest = await this.verifyBundleAt(sourceDirectory);
     const canonicalDestination =
       canonicalizePotentialPath(destinationDirectory);
-    if (await pathExists(canonicalDestination)) {
+    await ensurePrivateDirectory(canonicalDestination);
+    await removeAtomicTemporaryFiles(canonicalDestination, manifest);
+
+    const manifestPath = path.join(canonicalDestination, "manifest.json");
+    if (await pathExists(manifestPath)) {
+      await this.verifyBundleAt(canonicalDestination, manifest);
+      return canonicalDestination;
+    }
+
+    const existingFiles = await listPrivateBundleFiles(canonicalDestination);
+    const allowedFiles = new Set(manifest.files.map((file) => file.path));
+    const unexpected = [...existingFiles].filter(
+      (file) => !allowedFiles.has(file),
+    );
+    if (unexpected.length > 0) {
       throw new ArtifactStoreError(
         "IMMUTABLE_CONFLICT",
-        `Export destination already exists: ${canonicalDestination}`,
+        `Export destination contains conflicting files: ${unexpected.join(", ")}`,
       );
     }
-    await ensurePrivateDirectory(canonicalDestination);
+
     for (const file of manifest.files) {
       const source = await assertSafeSourceFile(sourceDirectory, file.path);
       const destination = resolveWithin(canonicalDestination, file.path);
       await ensurePrivateDirectoryForFile(canonicalDestination, file.path);
-      await writePrivateFileAtomic(
-        destination,
-        await readFileWithoutFollowingSymlinks(source),
-      );
+      if (await pathExists(destination)) {
+        assertExpectedHash(await hashFile(destination), file, file.path);
+      } else {
+        await writePrivateFileAtomic(
+          destination,
+          await readFileWithoutFollowingSymlinks(source),
+        );
+      }
     }
-    await writePrivateJson(
-      path.join(canonicalDestination, "manifest.json"),
-      manifest,
-    );
+    await writePrivateJson(manifestPath, manifest);
     await this.verifyBundleAt(canonicalDestination, manifest);
     return canonicalDestination;
   }
@@ -377,6 +392,7 @@ export class ArtifactStore {
         destination,
         prepared.manifest,
       );
+      await syncDirectory(path.dirname(destination));
       const committedJournal: MigrationJournal = {
         schemaVersion: 1,
         migrationId,
@@ -428,6 +444,12 @@ export class ArtifactStore {
 
     if (await pathExists(destination)) {
       const manifest = await this.verifyBundleAt(destination, journal.manifest);
+      await syncDirectory(path.dirname(destination));
+      await syncDirectory(
+        path.dirname(
+          resolveWithin(this.root, `.staging/${journal.migrationId}`),
+        ),
+      );
       journal = await this.markCommitted(journal);
       return {
         directory: destination,
@@ -501,15 +523,19 @@ export class ArtifactStore {
       this.root,
       journal.destinationRelative,
     );
+    let renamed = false;
     try {
       await rename(staging, destination);
-      await syncDirectory(path.dirname(staging));
-      await syncDirectory(path.dirname(destination));
+      renamed = true;
     } catch (error) {
       if (!(await pathExists(destination))) throw error;
       await this.verifyBundleAt(destination, journal.manifest);
       await rm(staging, { recursive: true, force: true });
-      await syncDirectory(path.dirname(staging));
+    }
+    await syncDirectory(path.dirname(destination));
+    await syncDirectory(path.dirname(staging));
+    if (!renamed) {
+      await this.verifyBundleAt(destination, journal.manifest);
     }
 
     journal = await this.markCommitted(journal);
@@ -824,6 +850,32 @@ function journalsMatchPrepared(
       comparableManifest(prepared.manifest) &&
     JSON.stringify(journal.sources) === JSON.stringify(prepared.sources)
   );
+}
+
+async function removeAtomicTemporaryFiles(
+  root: string,
+  manifest: ArtifactBundleManifest,
+): Promise<void> {
+  for (const relativeFile of [
+    ...manifest.files.map((file) => file.path),
+    "manifest.json",
+  ]) {
+    const destination = resolveWithin(root, relativeFile);
+    const temporary = path.join(
+      path.dirname(destination),
+      `.${path.basename(destination)}.kriscard-tmp`,
+    );
+    if (!(await pathExists(temporary))) continue;
+    const info = await lstat(temporary);
+    if (!info.isFile() || info.isSymbolicLink()) {
+      throw new ArtifactStoreError(
+        "IMMUTABLE_CONFLICT",
+        `Invalid atomic-write recovery file: ${temporary}`,
+      );
+    }
+    await rm(temporary, { force: false });
+    await syncDirectory(path.dirname(temporary));
+  }
 }
 
 async function ensurePrivateDirectoryForFile(

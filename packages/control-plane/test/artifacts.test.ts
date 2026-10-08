@@ -148,15 +148,50 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
   );
 
   const exportDirectory = path.join(temporary, "exported-revision");
-  await store.export(
-    {
-      kind: "revision",
-      repositoryFingerprint: context.repositoryFingerprint,
-      workItemId: context.workItemId,
-      revisionId,
-    },
-    exportDirectory,
+  const reference = {
+    kind: "revision" as const,
+    repositoryFingerprint: context.repositoryFingerprint,
+    workItemId: context.workItemId,
+    revisionId,
+  };
+  await store.export(reference, exportDirectory);
+  assert.equal(
+    await store.export(reference, exportDirectory),
+    await realpath(exportDirectory),
   );
+
+  const partialExport = path.join(temporary, "partial-export");
+  await mkdir(partialExport, { mode: 0o700 });
+  await writeFile(
+    path.join(partialExport, "spec.md"),
+    await readFile(path.join(imported.directory, "spec.md")),
+    { mode: 0o600 },
+  );
+  await writeFile(
+    path.join(partialExport, ".plan.md.kriscard-tmp"),
+    "interrupted write",
+    { mode: 0o600 },
+  );
+  assert.equal(
+    await store.export(reference, partialExport),
+    await realpath(partialExport),
+  );
+  await assert.rejects(
+    stat(path.join(partialExport, ".plan.md.kriscard-tmp")),
+    /ENOENT/,
+  );
+
+  const conflictingExport = path.join(temporary, "conflicting-export");
+  await mkdir(conflictingExport, { mode: 0o700 });
+  await writeFile(path.join(conflictingExport, "spec.md"), "wrong\n", {
+    mode: 0o600,
+  });
+  await assert.rejects(
+    store.export(reference, conflictingExport),
+    (error) =>
+      error instanceof ArtifactStoreError && error.code === "HASH_MISMATCH",
+  );
+
   const restoredStore = new ArtifactStore({
     root: path.join(temporary, "restored-store"),
   });
@@ -292,6 +327,16 @@ test("resumes after interruption without replacing copied files", async (t) => {
     /simulated interruption/,
   );
 
+  await writeFile(
+    path.join(
+      storeRoot,
+      ".staging",
+      "restartable-import",
+      ".plan.md.kriscard-tmp",
+    ),
+    "interrupted write",
+    { mode: 0o600 },
+  );
   const resumedStore = new ArtifactStore({ root: storeRoot });
   const resumed = await resumedStore.resumeMigration("restartable-import");
   assert.equal(resumed.manifest.kind, "revision");

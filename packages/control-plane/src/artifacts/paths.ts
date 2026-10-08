@@ -62,13 +62,13 @@ export function assertSafeRelativePath(relativePath: string): string {
       `Artifact path contains an unsafe segment: ${relativePath}`,
     );
   }
-  return segments.join(path.sep);
+  return segments.join("/");
 }
 
 export function resolveWithin(root: string, relativePath: string): string {
   const safeRelative = assertSafeRelativePath(relativePath);
   const resolvedRoot = path.resolve(root);
-  const resolved = path.resolve(resolvedRoot, safeRelative);
+  const resolved = path.resolve(resolvedRoot, ...safeRelative.split("/"));
   if (
     resolved !== resolvedRoot &&
     !resolved.startsWith(`${resolvedRoot}${path.sep}`)
@@ -108,13 +108,16 @@ export async function ensurePrivateDirectory(
   if (!relativePath) return resolvedRoot;
   const safeRelative = assertSafeRelativePath(relativePath);
   let current = resolvedRoot;
-  for (const segment of safeRelative.split(path.sep)) {
+  for (const segment of safeRelative.split("/")) {
     current = path.join(current, segment);
+    let created = false;
     try {
       await mkdir(current, { mode: privateDirectoryMode });
+      created = true;
     } catch (error) {
       if (!isAlreadyExists(error)) throw error;
     }
+    if (created) await syncDirectoryEntry(path.dirname(current));
     await inspectDirectory(current);
   }
   return current;
@@ -134,7 +137,7 @@ export async function assertSafeSourceFile(
   }
   const safeRelative = assertSafeRelativePath(relativePath);
   let current = resolvedRoot;
-  const segments = safeRelative.split(path.sep);
+  const segments = safeRelative.split("/");
 
   for (const [index, segment] of segments.entries()) {
     current = path.join(current, segment);
@@ -187,11 +190,14 @@ async function createPrivateRoot(resolvedRoot: string): Promise<void> {
   }
 
   for (const directory of missing.reverse()) {
+    let created = false;
     try {
       await mkdir(directory, { mode: privateDirectoryMode });
+      created = true;
     } catch (error) {
       if (!isAlreadyExists(error)) throw error;
     }
+    if (created) await syncDirectoryEntry(path.dirname(directory));
     await inspectDirectory(directory);
   }
   await inspectDirectory(resolvedRoot);
@@ -212,6 +218,15 @@ async function inspectDirectoryWithoutChangingMode(
       "INVALID_PATH",
       `Expected directory: ${directory}`,
     );
+  }
+}
+
+async function syncDirectoryEntry(directory: string): Promise<void> {
+  const handle = await open(directory, constants.O_RDONLY);
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 }
 

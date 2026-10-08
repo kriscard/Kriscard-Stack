@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, open, rename, rm } from "node:fs/promises";
 import path from "node:path";
@@ -24,24 +24,27 @@ export async function writePrivateFileAtomic(
   destination: string,
   content: Uint8Array | string,
 ): Promise<void> {
+  const parent = path.dirname(destination);
   const temporary = path.join(
-    path.dirname(destination),
-    `.${path.basename(destination)}-${randomUUID()}.tmp`,
+    parent,
+    `.${path.basename(destination)}.kriscard-tmp`,
   );
-  const handle = await open(temporary, "wx", privateFileMode);
+  await rm(temporary, { force: true });
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
+    handle = await open(temporary, "wx", privateFileMode);
     await handle.writeFile(content);
     await handle.sync();
-  } finally {
-    await handle.close();
-  }
-
-  try {
+    const completedHandle = handle;
+    handle = undefined;
+    await completedHandle.close();
     await rename(temporary, destination);
-    await syncDirectory(path.dirname(destination));
+    await syncDirectory(parent);
     await chmod(destination, privateFileMode);
   } catch (error) {
+    await handle?.close();
     await rm(temporary, { force: true });
+    await syncDirectory(parent);
     throw error;
   }
 }
