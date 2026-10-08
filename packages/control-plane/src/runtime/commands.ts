@@ -35,9 +35,36 @@ export type CommandRecord = CommandInput & {
   receipt?: CommandReceipt;
   error?: string;
 };
+export type CommandEvent = { position: number; command: CommandRecord };
 export type CommandLedger = {
   commands: Record<string, CommandRecord>;
+  // Optional to read T4 databases without rewriting their authoritative state.
+  version?: number;
+  events?: CommandEvent[];
 };
+
+const EVENT_LIMIT = 2_048;
+
+export class StaleCommandVersionError extends Error {}
+
+function appendCommandEvent(
+  ledger: CommandLedger,
+  command: CommandRecord,
+): number {
+  const position = (ledger.version ?? 0) + 1;
+  ledger.version = position;
+  ledger.events = [
+    ...(ledger.events ?? []),
+    {
+      position,
+      command: {
+        ...command,
+        ...(command.receipt ? { receipt: { ...command.receipt } } : {}),
+      },
+    },
+  ].slice(-EVENT_LIMIT);
+  return position;
+}
 
 export const Commands = defineDoc<CommandLedger>({
   kind: "kriscard.commands",
@@ -96,6 +123,7 @@ export function createCommandTask(adapter: CommandAdapter) {
             deadline = runtime.now() + leaseDurationMs;
             record.leaseExpiresAt = deadline;
           }
+          appendCommandEvent(ledger, record);
           return {
             status: "running",
             checkpoint:
@@ -113,7 +141,8 @@ export function createCommandTask(adapter: CommandAdapter) {
         let exhausted = false;
         let deadline = 0;
         await runtime.commit(async (tx) => {
-          const record = (await tx.doc(Commands)).commands[task.input.key];
+          const ledger = await tx.doc(Commands);
+          const record = ledger.commands[task.input.key];
           if (
             !record ||
             record.status !== "running" ||
@@ -128,6 +157,7 @@ export function createCommandTask(adapter: CommandAdapter) {
             record.status = "failed";
             record.error = "Replay-safe command exhausted its retry budget";
             delete record.leaseExpiresAt;
+            appendCommandEvent(ledger, record);
             return {
               status: "terminal",
               outcome: { status: "failed", error: { message: record.error } },
@@ -137,6 +167,7 @@ export function createCommandTask(adapter: CommandAdapter) {
           if (!task.state.checkpoint.inFlight) record.attempts++;
           deadline = runtime.now() + leaseDurationMs;
           record.leaseExpiresAt = deadline;
+          appendCommandEvent(ledger, record);
           return {
             status: "running",
             checkpoint: {
@@ -158,12 +189,14 @@ export function createCommandTask(adapter: CommandAdapter) {
         } catch (error) {
           if (runtime.signal.aborted) throw error;
           await runtime.commit(async (tx) => {
-            const record = (await tx.doc(Commands)).commands[task.input.key];
+            const ledger = await tx.doc(Commands);
+            const record = ledger.commands[task.input.key];
             if (!record) throw new Error("Missing command reservation");
             record.error = String(error);
             if (error instanceof CommandDeadlineError) {
               record.status = "needs_reconciliation";
               delete record.leaseExpiresAt;
+              appendCommandEvent(ledger, record);
               return {
                 status: "terminal",
                 outcome: { status: "failed", error: { message: record.error } },
@@ -173,11 +206,13 @@ export function createCommandTask(adapter: CommandAdapter) {
               record.status = "needs_reconciliation";
               record.error = `Retry budget exhausted; external outcome may be unknown: ${record.error}`;
               delete record.leaseExpiresAt;
+              appendCommandEvent(ledger, record);
               return {
                 status: "terminal",
                 outcome: { status: "failed", error: { message: record.error } },
               };
             }
+            appendCommandEvent(ledger, record);
             return {
               status: "running",
               checkpoint: {
@@ -203,13 +238,15 @@ export function createCommandTask(adapter: CommandAdapter) {
       },
       unsafe_interrupted: async (task, runtime, context) => {
         await runtime.commit(async (tx) => {
-          const record = (await tx.doc(Commands)).commands[task.input.key];
+          const ledger = await tx.doc(Commands);
+          const record = ledger.commands[task.input.key];
           if (!record || record.status !== "running")
             throw new Error("Missing unsafe intent");
           record.status = "needs_reconciliation";
           record.error =
             "Execution was interrupted after durable intent; external outcome is unknown";
           delete record.leaseExpiresAt;
+          appendCommandEvent(ledger, record);
           return {
             status: "terminal",
             outcome: { status: "failed", error: { message: record.error } },
@@ -219,12 +256,14 @@ export function createCommandTask(adapter: CommandAdapter) {
     },
     abort: async (task, runtime, context) => {
       await runtime.commit(async (tx) => {
-        const record = (await tx.doc(Commands)).commands[task.input.key];
+        const ledger = await tx.doc(Commands);
+        const record = ledger.commands[task.input.key];
         if (record && record.status !== "completed") {
           record.status = "needs_reconciliation";
           record.error =
             "Command aborted; inspect external state before retrying";
           delete record.leaseExpiresAt;
+          appendCommandEvent(ledger, record);
         }
         return { status: "terminal", outcome: { status: "aborted" } };
       }, context);
@@ -250,11 +289,13 @@ async function executeOnce(
   } catch (error) {
     if (runtime.signal.aborted) throw error;
     await runtime.commit(async (tx) => {
-      const record = (await tx.doc(Commands)).commands[input.key];
+      const ledger = await tx.doc(Commands);
+      const record = ledger.commands[input.key];
       if (!record) throw new Error("Missing unsafe intent");
       record.status = "needs_reconciliation";
       record.error = `External outcome unknown: ${String(error)}`;
       delete record.leaseExpiresAt;
+      appendCommandEvent(ledger, record);
       return {
         status: "terminal",
         outcome: { status: "failed", error: { message: record.error } },
@@ -317,7 +358,8 @@ async function completeCommand(
   context: Context,
 ): Promise<void> {
   await runtime.commit(async (tx) => {
-    const record = (await tx.doc(Commands)).commands[key];
+    const ledger = await tx.doc(Commands);
+    const record = ledger.commands[key];
     if (!record || record.status !== "running")
       throw new Error("Missing active command");
     const receipt = { reference, completedAt: runtime.now() };
@@ -325,6 +367,7 @@ async function completeCommand(
     record.receipt = receipt;
     delete record.leaseExpiresAt;
     delete record.error;
+    appendCommandEvent(ledger, record);
     return {
       status: "terminal",
       outcome: { status: "completed", result: receipt },
@@ -339,6 +382,17 @@ export async function submitCommand(
   input: CommandInput,
   context: Context = BACKGROUND_CONTEXT,
 ): Promise<number> {
+  return (await reserveCommand(harness, task, input, undefined, context))
+    .taskId;
+}
+
+export async function reserveCommand(
+  harness: Harness,
+  task: ReturnType<typeof createCommandTask>,
+  input: CommandInput,
+  expectedVersion: number | undefined,
+  context: Context = BACKGROUND_CONTEXT,
+): Promise<{ taskId: number; version: number }> {
   if (!input.key || !input.operation)
     throw new Error("A command needs a key and operation");
   if (
@@ -348,7 +402,7 @@ export async function submitCommand(
     throw new Error("Unsupported command replay class");
   }
   const root = await harness.root(context);
-  const taskId = await root.commit(async (tx) => {
+  const reservation = await root.commit(async (tx) => {
     const ledger = await tx.doc(Commands);
     const existing = Object.hasOwn(ledger.commands, input.key)
       ? ledger.commands[input.key]
@@ -360,19 +414,27 @@ export async function submitCommand(
       ) {
         throw new Error("Idempotency key already belongs to another command");
       }
-      return existing.taskId;
+      return { taskId: existing.taskId, version: ledger.version ?? 0 };
+    }
+    if (
+      expectedVersion !== undefined &&
+      expectedVersion !== (ledger.version ?? 0)
+    ) {
+      throw new StaleCommandVersionError("Command state version changed");
     }
     const taskId = await tx.createTask(task, input, {
       ownership: { kind: "conversation" },
     });
-    ledger.commands[input.key] = {
+    const record: CommandRecord = {
       ...input,
       taskId,
       status: "queued",
       attempts: 0,
     };
-    return taskId;
+    ledger.commands[input.key] = record;
+    const version = appendCommandEvent(ledger, record);
+    return { taskId, version };
   }, context);
   harness.resume();
-  return taskId;
+  return reservation;
 }

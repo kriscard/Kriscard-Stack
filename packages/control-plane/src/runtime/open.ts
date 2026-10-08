@@ -18,8 +18,11 @@ import {
 import {
   Commands,
   createCommandTask,
+  reserveCommand,
   submitCommand,
   type CommandAdapter,
+  type CommandEvent,
+  type CommandLedger,
   type CommandRecord,
   type CommandRequest,
 } from "./commands.js";
@@ -31,9 +34,22 @@ const uncertainOwners: Array<Awaited<ReturnType<typeof acquireOwnerLock>>> = [];
 
 export interface OpenControlPlane {
   submit(input: CommandRequest): Promise<number>;
+  submitVersioned(
+    input: CommandRequest,
+    expectedVersion: number,
+  ): Promise<{ taskId: number; version: number }>;
   command(key: string): Promise<Readonly<CommandRecord> | undefined>;
+  state(): Promise<{
+    version: number;
+    commands: Record<string, CommandRecord>;
+  }>;
+  eventsAfter(
+    position: number,
+  ): Promise<{ version: number; events: CommandEvent[] }>;
   close(): Promise<void>;
 }
+
+export class ExpiredEventPositionError extends Error {}
 
 export async function openControlPlane(
   dataRoot: string = defaultArtifactRoot(),
@@ -107,6 +123,23 @@ export async function openControlPlane(
           replayClass,
         });
       },
+      async submitVersioned(input, expectedVersion) {
+        if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0)
+          throw new RangeError(
+            "Expected version must be a nonnegative integer",
+          );
+        if (!commandTask || !commandAdapter)
+          throw new Error("No command adapter is configured");
+        const replayClass = commandAdapter.classify(input.operation);
+        if (!replayClass)
+          throw new Error(`Unsupported command operation: ${input.operation}`);
+        return reserveCommand(
+          openedHarness,
+          commandTask,
+          { ...input, replayClass },
+          expectedVersion,
+        );
+      },
       async command(key): Promise<Readonly<CommandRecord> | undefined> {
         const ledger = await openedHarness.snapshot(
           Commands,
@@ -117,6 +150,38 @@ export async function openControlPlane(
             ? ledger.commands[key]
             : undefined;
         return record ? structuredClone(record) : undefined;
+      },
+      async state() {
+        const ledger = await openedHarness.snapshot(
+          Commands,
+          BACKGROUND_CONTEXT,
+        );
+        return {
+          version: ledger?.version ?? 0,
+          commands: structuredClone(ledger?.commands ?? {}),
+        };
+      },
+      async eventsAfter(position) {
+        if (!Number.isSafeInteger(position) || position < 0)
+          throw new RangeError("Event position must be a nonnegative integer");
+        const ledger: CommandLedger | undefined = await openedHarness.snapshot(
+          Commands,
+          BACKGROUND_CONTEXT,
+        );
+        const version = ledger?.version ?? 0;
+        if (position > version)
+          throw new RangeError("Event position exceeds the current version");
+        const events = ledger?.events ?? [];
+        if (events.length > 0 && position < events[0]!.position - 1)
+          throw new ExpiredEventPositionError(
+            `Event position ${position} has expired (oldest ${events[0]!.position}, version ${version}); fetch a fresh state snapshot`,
+          );
+        return {
+          version,
+          events: structuredClone(
+            events.filter((event) => event.position > position),
+          ),
+        };
       },
       async close(): Promise<void> {
         if (closed) return;
