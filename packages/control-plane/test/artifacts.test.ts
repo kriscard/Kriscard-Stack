@@ -5,8 +5,11 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
+  rm,
   stat,
   symlink,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -20,10 +23,12 @@ import {
 } from "@kriscard/core";
 
 import {
+  ArtifactContextSchema,
   ArtifactStore,
   ArtifactStoreError,
+  EvidenceArtifactContextSchema,
   defaultArtifactRoot,
-  type ArtifactContext,
+  type EvidenceArtifactContext,
 } from "../src/artifacts/index.js";
 
 const createdAt = "2026-10-08T00:00:00Z";
@@ -32,7 +37,7 @@ function digest(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
-function createContext(): ArtifactContext {
+function createContext(): EvidenceArtifactContext {
   return {
     repositoryFingerprint: "github.com/kriscard/Kriscard-Stack",
     targetBranch: "main",
@@ -61,7 +66,6 @@ async function createApprovedSource(
 async function temporaryTestRoot(t: TestContext): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), "kriscard-artifacts-"));
   t.after(async () => {
-    const { rm } = await import("node:fs/promises");
     await rm(root, { recursive: true, force: true });
   });
   return root;
@@ -79,6 +83,36 @@ test("creates a missing private data hierarchy and rejects relative XDG paths", 
     () => defaultArtifactRoot({ XDG_DATA_HOME: "relative/data" }, temporary),
     /XDG_DATA_HOME must be an absolute path/,
   );
+});
+
+test("requires branch association and an explicit PR lifecycle", () => {
+  const context = createContext();
+  assert.equal(ArtifactContextSchema.validate(context), true);
+  assert.equal(
+    ArtifactContextSchema.validate({ ...context, pullRequest: null }),
+    true,
+  );
+  assert.equal(
+    ArtifactContextSchema.validate({ ...context, branch: undefined }),
+    false,
+  );
+  assert.equal(
+    EvidenceArtifactContextSchema.validate({ ...context, pullRequest: null }),
+    false,
+  );
+});
+
+test("canonicalizes configured roots reached through an ancestor symlink", async (t) => {
+  const temporary = await temporaryTestRoot(t);
+  const actual = path.join(temporary, "actual");
+  const alias = path.join(temporary, "alias");
+  await mkdir(actual);
+  await symlink(actual, alias);
+
+  const store = new ArtifactStore({ root: path.join(alias, "private-store") });
+  await store.initialize();
+
+  assert.equal(store.root, path.join(await realpath(actual), "private-store"));
 });
 
 test("imports, verifies, exports, and restores an approved revision", async (t) => {
@@ -274,6 +308,55 @@ test("resumes after interruption without replacing copied files", async (t) => {
   assert.equal(journal.status, "committed");
 });
 
+test("retires legacy sources only after commit and resumes retirement", async (t) => {
+  const temporary = await temporaryTestRoot(t);
+  const source = await createApprovedSource(temporary);
+  await writeFile(path.join(source, "unrelated.txt"), "keep me\n");
+  const context = createContext();
+  const revisionId = createId("revision", randomUUID());
+  let interrupted = false;
+  const storeRoot = path.join(temporary, "store");
+  const interruptingStore = new ArtifactStore({
+    root: storeRoot,
+    onCheckpoint(checkpoint) {
+      if (!interrupted && checkpoint.phase === "source_retired") {
+        interrupted = true;
+        throw new Error("retirement interrupted");
+      }
+    },
+  });
+  await interruptingStore.importApprovedRevision({
+    context,
+    revisionId,
+    sourceDirectory: source,
+    migrationId: "retirement-import",
+    createdAt,
+  });
+
+  await assert.rejects(
+    interruptingStore.retireMigrationSource("retirement-import"),
+    /retirement interrupted/,
+  );
+  const resumedStore = new ArtifactStore({ root: storeRoot });
+  const resumed = await resumedStore.resumeMigration("retirement-import");
+
+  assert.equal(resumed.manifest.kind, "revision");
+  await assert.rejects(stat(path.join(source, "spec.md")), /ENOENT/);
+  await assert.rejects(stat(path.join(source, "plan.md")), /ENOENT/);
+  await assert.rejects(stat(path.join(source, "approval.md")), /ENOENT/);
+  assert.equal(
+    await readFile(path.join(source, "unrelated.txt"), "utf8"),
+    "keep me\n",
+  );
+  const journal = JSON.parse(
+    await readFile(
+      path.join(storeRoot, ".migrations", "retirement-import.json"),
+      "utf8",
+    ),
+  ) as { status: string };
+  assert.equal(journal.status, "retired");
+});
+
 test("immutable destinations cannot be replaced by different approved content", async (t) => {
   const temporary = await temporaryTestRoot(t);
   const source = await createApprovedSource(temporary);
@@ -306,6 +389,101 @@ test("immutable destinations cannot be replaced by different approved content", 
   );
 });
 
+test("a conflicting restore cannot poison a later genuine restore", async (t) => {
+  const temporary = await temporaryTestRoot(t);
+  const context = createContext();
+  const revisionId = createId("revision", randomUUID());
+  const genuineSource = await createApprovedSource(
+    path.join(temporary, "genuine-source"),
+  );
+  const destinationStore = new ArtifactStore({
+    root: path.join(temporary, "destination-store"),
+  });
+  const reference = {
+    kind: "revision" as const,
+    repositoryFingerprint: context.repositoryFingerprint,
+    workItemId: context.workItemId,
+    revisionId,
+  };
+  await destinationStore.importApprovedRevision({
+    context,
+    revisionId,
+    sourceDirectory: genuineSource,
+    migrationId: "destination-import",
+    createdAt,
+  });
+  const genuineExport = path.join(temporary, "genuine-export");
+  await destinationStore.export(reference, genuineExport);
+
+  const conflictingSource = await createApprovedSource(
+    path.join(temporary, "conflicting-source"),
+    "# Conflicting specification\n",
+  );
+  const conflictingStore = new ArtifactStore({
+    root: path.join(temporary, "conflicting-store"),
+  });
+  await conflictingStore.importApprovedRevision({
+    context,
+    revisionId,
+    sourceDirectory: conflictingSource,
+    createdAt,
+  });
+  const conflictingExport = path.join(temporary, "conflicting-export");
+  await conflictingStore.export(reference, conflictingExport);
+
+  await assert.rejects(
+    destinationStore.restore(conflictingExport),
+    (error) =>
+      error instanceof ArtifactStoreError &&
+      error.code === "IMMUTABLE_CONFLICT",
+  );
+  const restored = await destinationStore.restore(genuineExport);
+  assert.equal(restored.manifest.kind, "revision");
+});
+
+test("restore rejects self-consistent manifests with forged relationships", async (t) => {
+  const temporary = await temporaryTestRoot(t);
+  const context = createContext();
+  const revisionId = createId("revision", randomUUID());
+  const source = await createApprovedSource(temporary);
+  const sourceStore = new ArtifactStore({
+    root: path.join(temporary, "source-store"),
+  });
+  await sourceStore.importApprovedRevision({
+    context,
+    revisionId,
+    sourceDirectory: source,
+    createdAt,
+  });
+  const exportDirectory = path.join(temporary, "forged-export");
+  await sourceStore.export(
+    {
+      kind: "revision",
+      repositoryFingerprint: context.repositoryFingerprint,
+      workItemId: context.workItemId,
+      revisionId,
+    },
+    exportDirectory,
+  );
+  const manifestPath = path.join(exportDirectory, "manifest.json");
+  const forged = JSON.parse(await readFile(manifestPath, "utf8")) as {
+    files: Array<{ path: string }>;
+  };
+  forged.files = forged.files.filter((file) => file.path !== "spec.md");
+  await unlink(path.join(exportDirectory, "spec.md"));
+  await writeFile(manifestPath, `${JSON.stringify(forged, null, 2)}\n`, {
+    mode: 0o600,
+  });
+
+  const restoredStore = new ArtifactStore({
+    root: path.join(temporary, "restored-store"),
+  });
+  await assert.rejects(
+    restoredStore.restore(exportDirectory),
+    /requires spec.md, plan.md, and approval.md/,
+  );
+});
+
 test("stores and verifies readable final evidence", async (t) => {
   const temporary = await temporaryTestRoot(t);
   const source = path.join(temporary, "evidence-source");
@@ -334,6 +512,61 @@ test("stores and verifies readable final evidence", async (t) => {
   assert.equal(
     await readFile(path.join(imported.directory, "evidence.md"), "utf8"),
     "# Verification\nPassed\n",
+  );
+});
+
+test("restore rejects forged evidence IDs and missing artifact references", async (t) => {
+  const temporary = await temporaryTestRoot(t);
+  const source = path.join(temporary, "evidence-source");
+  await mkdir(source);
+  await writeFile(path.join(source, "evidence.md"), "# Verification\nPassed\n");
+  const context = createContext();
+  const verdict = createVerdict();
+  const sourceStore = new ArtifactStore({
+    root: path.join(temporary, "source-store"),
+  });
+  await sourceStore.importEvidence({
+    context,
+    verdict,
+    sourceDirectory: source,
+    files: ["evidence.md"],
+    createdAt,
+  });
+  const exportDirectory = path.join(temporary, "evidence-export");
+  await sourceStore.export(
+    {
+      kind: "evidence",
+      repositoryFingerprint: context.repositoryFingerprint,
+      workItemId: context.workItemId,
+      verdictId: verdict.id,
+    },
+    exportDirectory,
+  );
+  const manifestPath = path.join(exportDirectory, "manifest.json");
+  const forged = JSON.parse(await readFile(manifestPath, "utf8")) as {
+    verdictId: string;
+    verdict: { id: string; artifactReferences: string[] };
+  };
+  forged.verdictId = createId("verdict", randomUUID());
+  await writeFile(manifestPath, `${JSON.stringify(forged, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  const restoredStore = new ArtifactStore({
+    root: path.join(temporary, "restored-store"),
+  });
+  await assert.rejects(
+    restoredStore.restore(exportDirectory),
+    /verdictId does not match verdict.id/,
+  );
+
+  forged.verdictId = forged.verdict.id;
+  forged.verdict.artifactReferences = ["missing.md"];
+  await writeFile(manifestPath, `${JSON.stringify(forged, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  await assert.rejects(
+    restoredStore.restore(exportDirectory),
+    /artifact reference is not stored/,
   );
 });
 

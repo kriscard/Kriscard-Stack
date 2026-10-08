@@ -16,8 +16,8 @@ export const ArtifactContextSchema = z.looseObject({
   startingCommit: GitShaSchema,
   workItemId: WorkItemIdSchema,
   taskGroup: z.string().min(1),
-  branch: z.string().min(1).optional(),
-  pullRequest: z.int().positive().optional(),
+  branch: z.string().min(1),
+  pullRequest: z.int().positive().nullable(),
 });
 export type ArtifactContext = z.output<typeof ArtifactContextSchema>;
 
@@ -28,9 +28,15 @@ export const StoredFileSchema = z.looseObject({
 });
 export type StoredFile = z.output<typeof StoredFileSchema>;
 
+export const EvidenceArtifactContextSchema = ArtifactContextSchema.extend({
+  pullRequest: z.int().positive(),
+});
+export type EvidenceArtifactContext = z.output<
+  typeof EvidenceArtifactContextSchema
+>;
+
 const ManifestBase = {
   schemaVersion: z.literal(1),
-  context: ArtifactContextSchema,
   createdAt: TimestampSchema,
   files: z.array(StoredFileSchema).min(1),
 };
@@ -38,6 +44,7 @@ const ManifestBase = {
 export const RevisionBundleManifestSchema = z.looseObject({
   ...ManifestBase,
   kind: z.literal("revision"),
+  context: ArtifactContextSchema,
   revisionId: RevisionIdSchema,
   approvedHashes: z.looseObject({
     spec: Sha256Schema,
@@ -52,6 +59,7 @@ export type RevisionBundleManifest = z.output<
 export const EvidenceBundleManifestSchema = z.looseObject({
   ...ManifestBase,
   kind: z.literal("evidence"),
+  context: EvidenceArtifactContextSchema,
   verdictId: VerdictIdSchema,
   verdict: EvidenceVerdictSchema,
 });
@@ -76,12 +84,13 @@ export type MigrationSource = z.output<typeof MigrationSourceSchema>;
 export const MigrationJournalSchema = z.looseObject({
   schemaVersion: z.literal(1),
   migrationId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,127}$/),
-  status: z.enum(["copying", "committed"]),
+  status: z.enum(["copying", "committed", "retiring", "retired"]),
   sourceDirectory: z.string().min(1),
   destinationRelative: z.string().min(1),
   manifest: ArtifactBundleManifestSchema,
   sources: z.array(MigrationSourceSchema).min(1),
   completedFiles: z.array(z.string().min(1)),
+  retiredFiles: z.array(z.string().min(1)).optional(),
   updatedAt: TimestampSchema,
 });
 export type MigrationJournal = z.output<typeof MigrationJournalSchema>;

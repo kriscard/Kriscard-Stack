@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { constants } from "node:fs";
 import { chmod, open, rename, rm } from "node:fs/promises";
 import path from "node:path";
 
@@ -37,10 +38,20 @@ export async function writePrivateFileAtomic(
 
   try {
     await rename(temporary, destination);
+    await syncDirectory(path.dirname(destination));
     await chmod(destination, privateFileMode);
   } catch (error) {
     await rm(temporary, { force: true });
     throw error;
+  }
+}
+
+export async function syncDirectory(directory: string): Promise<void> {
+  const handle = await open(directory, constants.O_RDONLY);
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 }
 

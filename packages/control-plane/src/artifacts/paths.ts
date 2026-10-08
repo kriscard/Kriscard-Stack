@@ -1,5 +1,5 @@
-import { constants } from "node:fs";
-import { chmod, lstat, mkdir, open } from "node:fs/promises";
+import { constants, existsSync, realpathSync } from "node:fs";
+import { chmod, lstat, mkdir, open, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -23,6 +23,19 @@ export function defaultArtifactRoot(
     dataHome || path.join(home, ".local", "share"),
     "kriscard-stack",
   );
+}
+
+export function canonicalizePotentialPath(inputPath: string): string {
+  const missingSegments: string[] = [];
+  let current = path.resolve(inputPath);
+  while (!existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    missingSegments.push(path.basename(current));
+    current = parent;
+  }
+  const canonicalAncestor = realpathSync.native(current);
+  return path.join(canonicalAncestor, ...missingSegments.reverse());
 }
 
 export function assertSafeRelativePath(relativePath: string): string {
@@ -113,6 +126,12 @@ export async function assertSafeSourceFile(
 ): Promise<string> {
   const resolvedRoot = path.resolve(sourceRoot);
   await inspectDirectoryWithoutChangingMode(resolvedRoot);
+  if ((await realpath(resolvedRoot)) !== resolvedRoot) {
+    throw new ArtifactStoreError(
+      "SYMLINK_ESCAPE",
+      `Source root changed or is not canonical: ${resolvedRoot}`,
+    );
+  }
   const safeRelative = assertSafeRelativePath(relativePath);
   let current = resolvedRoot;
   const segments = safeRelative.split(path.sep);
