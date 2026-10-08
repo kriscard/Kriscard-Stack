@@ -54,15 +54,18 @@ export function assertSafeRelativePath(relativePath: string): string {
 
   const segments = relativePath.split("/");
   if (
-    segments.some(
-      (segment) =>
+    segments.some((segment) => {
+      const baseName = segment.split(".")[0]?.toUpperCase() ?? "";
+      return (
         segment === "" ||
         segment === "." ||
         segment === ".." ||
         /[<>:"|?*\u0000-\u001f]/.test(segment) ||
         /[. ]$/.test(segment) ||
-        /^\..+\.kriscard-tmp$/.test(segment),
-    )
+        /^\..+\.kriscard-tmp$/i.test(segment) ||
+        /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(baseName)
+      );
+    })
   ) {
     throw new ArtifactStoreError(
       "INVALID_PATH",
@@ -70,6 +73,10 @@ export function assertSafeRelativePath(relativePath: string): string {
     );
   }
   return segments.join("/");
+}
+
+export function portablePathKey(relativePath: string): string {
+  return assertSafeRelativePath(relativePath).toLowerCase();
 }
 
 export function resolveWithin(root: string, relativePath: string): string {

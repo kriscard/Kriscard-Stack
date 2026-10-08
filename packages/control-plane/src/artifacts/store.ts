@@ -23,11 +23,11 @@ import {
   writePrivateJson,
 } from "./files.js";
 import {
-  assertSafeRelativePath,
   assertSafeSourceFile,
   canonicalizePotentialPath,
   defaultArtifactRoot,
   ensurePrivateDirectory,
+  portablePathKey,
   readFileWithoutFollowingSymlinks,
   resolveWithin,
 } from "./paths.js";
@@ -270,6 +270,12 @@ export class ArtifactStore {
     const manifest = await this.verifyBundleAt(sourceDirectory);
     const canonicalDestination =
       canonicalizePotentialPath(destinationDirectory);
+    if (pathsOverlap(canonicalDestination, this.root)) {
+      throw new ArtifactStoreError(
+        "INVALID_PATH",
+        "Export destination must not overlap the private store",
+      );
+    }
     await ensurePrivateDirectory(canonicalDestination);
     await removeAtomicTemporaryFiles(canonicalDestination, manifest);
 
@@ -280,9 +286,11 @@ export class ArtifactStore {
     }
 
     const existingFiles = await listPrivateBundleFiles(canonicalDestination);
-    const allowedFiles = new Set(manifest.files.map((file) => file.path));
+    const allowedFiles = new Set(
+      manifest.files.map((file) => portablePathKey(file.path)),
+    );
     const unexpected = [...existingFiles].filter(
-      (file) => !allowedFiles.has(file),
+      (file) => !allowedFiles.has(portablePathKey(file)),
     );
     if (unexpected.length > 0) {
       throw new ArtifactStoreError(
@@ -338,28 +346,28 @@ export class ArtifactStore {
     const sourcePaths = new Set<string>();
     const files: StoredFile[] = [];
     for (const source of sources) {
-      assertSafeRelativePath(source.sourcePath);
-      if (sourcePaths.has(source.sourcePath)) {
+      const sourceKey = portablePathKey(source.sourcePath);
+      if (sourcePaths.has(sourceKey)) {
         throw new ArtifactStoreError(
           "INVALID_ARTIFACT",
           `Duplicate source artifact path: ${source.sourcePath}`,
         );
       }
-      sourcePaths.add(source.sourcePath);
-      assertSafeRelativePath(source.storedPath);
-      if (source.storedPath === "manifest.json") {
+      sourcePaths.add(sourceKey);
+      const storedKey = portablePathKey(source.storedPath);
+      if (storedKey === portablePathKey("manifest.json")) {
         throw new ArtifactStoreError(
           "INVALID_PATH",
           "manifest.json is reserved by the artifact store",
         );
       }
-      if (storedPaths.has(source.storedPath)) {
+      if (storedPaths.has(storedKey)) {
         throw new ArtifactStoreError(
           "INVALID_ARTIFACT",
           `Duplicate stored artifact path: ${source.storedPath}`,
         );
       }
-      storedPaths.add(source.storedPath);
+      storedPaths.add(storedKey);
       const sourcePath = await assertSafeSourceFile(
         sourceDirectory,
         source.sourcePath,
@@ -655,16 +663,16 @@ export class ArtifactStore {
       );
     }
 
-    const expectedPaths = new Set(["manifest.json"]);
+    const expectedPaths = new Set([portablePathKey("manifest.json")]);
     for (const file of manifest.files) {
-      const safePath = assertSafeRelativePath(file.path);
-      if (expectedPaths.has(safePath)) {
+      const pathKey = portablePathKey(file.path);
+      if (expectedPaths.has(pathKey)) {
         throw new ArtifactStoreError(
           "INVALID_ARTIFACT",
           `Duplicate manifest file path: ${file.path}`,
         );
       }
-      expectedPaths.add(safePath);
+      expectedPaths.add(pathKey);
       const filePath = await assertSafeSourceFile(directory, file.path);
       assertExpectedHash(await hashFile(filePath), file, file.path);
     }
@@ -672,9 +680,13 @@ export class ArtifactStore {
     await this.validateBundleSemantics(directory, manifest);
 
     const actualPaths = await listPrivateBundleFiles(directory);
+    const actualPathKeys = new Set(
+      [...actualPaths].map((file) => portablePathKey(file)),
+    );
     if (
-      actualPaths.size !== expectedPaths.size ||
-      [...expectedPaths].some((file) => !actualPaths.has(file))
+      actualPathKeys.size !== actualPaths.size ||
+      actualPathKeys.size !== expectedPaths.size ||
+      [...expectedPaths].some((file) => !actualPathKeys.has(file))
     ) {
       throw new ArtifactStoreError(
         "INVALID_ARTIFACT",
@@ -689,19 +701,19 @@ export class ArtifactStore {
     manifest: ArtifactBundleManifest,
   ): Promise<void> {
     const filesByPath = new Map(
-      manifest.files.map((file) => [file.path, file]),
+      manifest.files.map((file) => [portablePathKey(file.path), file]),
     );
     if (manifest.kind === "revision") {
-      const spec = filesByPath.get("spec.md");
-      const plan = filesByPath.get("plan.md");
-      const approval = filesByPath.get("approval.md");
+      const spec = filesByPath.get(portablePathKey("spec.md"));
+      const plan = filesByPath.get(portablePathKey("plan.md"));
+      const approval = filesByPath.get(portablePathKey("approval.md"));
       if (!spec || !plan || !approval) {
         throw new ArtifactStoreError(
           "INVALID_ARTIFACT",
           "Revision bundle requires spec.md, plan.md, and approval.md",
         );
       }
-      const approvalPath = await assertSafeSourceFile(directory, "approval.md");
+      const approvalPath = await assertSafeSourceFile(directory, approval.path);
       const approved = parseApprovedHashes(
         (await readFileWithoutFollowingSymlinks(approvalPath)).toString("utf8"),
       );
@@ -727,8 +739,8 @@ export class ArtifactStore {
       );
     }
     for (const artifactReference of manifest.verdict.artifactReferences) {
-      const safeReference = assertSafeRelativePath(artifactReference);
-      if (!filesByPath.has(safeReference)) {
+      const referenceKey = portablePathKey(artifactReference);
+      if (!filesByPath.has(referenceKey)) {
         throw new ArtifactStoreError(
           "INVALID_ARTIFACT",
           `Evidence artifact reference is not stored: ${artifactReference}`,
@@ -811,6 +823,22 @@ export class ArtifactStore {
   private async checkpoint(checkpoint: MigrationCheckpoint): Promise<void> {
     await this.onCheckpoint?.(checkpoint);
   }
+}
+
+function pathsOverlap(leftPath: string, rightPath: string): boolean {
+  const left = path.resolve(leftPath).toLowerCase();
+  const right = path.resolve(rightPath).toLowerCase();
+  return isPathInside(left, right) || isPathInside(right, left);
+}
+
+function isPathInside(parent: string, candidate: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return (
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) &&
+      relative !== ".." &&
+      !path.isAbsolute(relative))
+  );
 }
 
 function repositoryStorageKey(repositoryFingerprint: string): string {

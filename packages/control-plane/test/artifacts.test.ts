@@ -29,6 +29,7 @@ import {
   EvidenceArtifactContextSchema,
   assertSafeRelativePath,
   defaultArtifactRoot,
+  portablePathKey,
   type EvidenceArtifactContext,
 } from "../src/artifacts/index.js";
 
@@ -108,13 +109,17 @@ test("uses a host-neutral portable artifact path grammar", () => {
     assertSafeRelativePath("supporting/decision.md"),
     "supporting/decision.md",
   );
+  assert.equal(portablePathKey("Report.md"), portablePathKey("report.MD"));
   for (const unsafe of [
     "C:/artifact.md",
     "C:artifact.md",
     "//server/share.md",
     "folder\\artifact.md",
     ".manifest.json.kriscard-tmp",
+    ".plan.md.KRISCARD-TMP",
     "folder/.evidence.md.kriscard-tmp",
+    "CON.md",
+    "folder/lpt1.txt",
   ]) {
     assert.throws(() => assertSafeRelativePath(unsafe), /Artifact path/);
   }
@@ -172,6 +177,17 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
     workItemId: context.workItemId,
     revisionId,
   };
+  await assert.rejects(
+    store.export(reference, path.join(imported.directory, "copy")),
+    (error) =>
+      error instanceof ArtifactStoreError && error.code === "INVALID_PATH",
+  );
+  await assert.rejects(
+    store.export(reference, temporary),
+    (error) =>
+      error instanceof ArtifactStoreError && error.code === "INVALID_PATH",
+  );
+  await assert.rejects(stat(path.join(imported.directory, "copy")), /ENOENT/);
   await store.export(reference, exportDirectory);
   assert.equal(
     await store.export(reference, exportDirectory),
