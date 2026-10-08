@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "allowJs": false,
+    "checkJs": false,
+    "declaration": true,
+    "exactOptionalPropertyTypes": true,
+    "noEmit": false,
+    "noUncheckedIndexedAccess": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "verbatimModuleSyntax": true
+  },
+  "include": ["src/**/*.ts"]
+}
