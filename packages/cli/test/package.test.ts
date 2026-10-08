@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,6 +67,10 @@ test("the packed CLI reaches read-only setup through both npx and pnpm dlx", asy
       `---\nname: ${name}\ndescription: Fixture\n---\n`,
     );
   }
+  const installed = path.join(root, "installed");
+  await mkdir(installed);
+  await symlink(path.join(stack, "skills"), path.join(installed, "setup"));
+  await symlink(path.join(general, "skills"), path.join(installed, "general"));
   await execute("git", ["init", "-q", general]);
   await execute("git", ["-C", general, "add", "."]);
   await execute("git", [
@@ -94,6 +105,8 @@ test("the packed CLI reaches read-only setup through both npx and pnpm dlx", asy
     general,
     "--home",
     home,
+    "--installed-skills",
+    installed,
     "--host",
     "pi",
     "--mode",

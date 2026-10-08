@@ -12,15 +12,28 @@ export async function readExisting(file: string): Promise<string | undefined> {
       const info = await handle.stat();
       if (!info.isFile() || info.nlink !== 1 || info.size > 1024 * 1024)
         throw new SetupError(
-          "Setup configuration must be a small regular file with no hard links",
+          "Setup configuration must be a small regular file with no hard links; inspect the target and reviewed backup before replacing it with a private regular file",
         );
       return await handle.readFile("utf8");
     } finally {
       await handle.close();
     }
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT")
-      return undefined;
+    if (error instanceof Error && "code" in error) {
+      if (error.code === "ENOENT") return undefined;
+      if (error.code === "ELOOP" || error.code === "EMLINK")
+        throw new SetupError(
+          "Configuration file is a symlink; provide its explicit Stow package with --stow-source, or review the link and choose a regular private destination",
+        );
+      if (error.code === "EACCES" || error.code === "EPERM")
+        throw new SetupError(
+          "Configuration cannot be read with current permissions; review ownership and private access before retrying",
+        );
+      if (error.code === "ENOTDIR")
+        throw new SetupError(
+          "Configuration parent is not a directory; inspect the supplied home or Stow package and choose the correct root",
+        );
+    }
     throw error;
   }
 }

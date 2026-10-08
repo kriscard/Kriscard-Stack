@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
+  cp,
   mkdir,
   mkdtemp,
   readFile,
@@ -65,7 +66,15 @@ async function fixture(t: { onTestFinished(fn: () => Promise<void>): void }) {
       revision,
     }),
   );
+  const installed = path.join(root, "installed");
+  await mkdir(installed);
+  await symlink(
+    path.join(stackRepository, "skills", "setup"),
+    path.join(installed, "setup"),
+  );
+  await symlink(path.dirname(generalSkill), path.join(installed, "test"));
   const options: DoctorOptions = {
+    installedSkillRoots: [installed],
     stackRepository,
     generalRepository,
     platform: "darwin",
@@ -100,6 +109,117 @@ test("doctor checks compatible sources without writing or launching a runtime", 
     ),
     "",
   );
+});
+
+test("doctor rejects missing, empty, or single-source installed roots", async (t) => {
+  const { options, root } = await fixture(t);
+  const empty = path.join(root, "empty-installation");
+  await mkdir(empty);
+  for (const installedSkillRoots of [undefined, [empty]]) {
+    const request = { ...options };
+    delete request.installedSkillRoots;
+    assert.equal(
+      (
+        await doctor({
+          ...request,
+          ...(installedSkillRoots ? { installedSkillRoots } : {}),
+        })
+      ).ok,
+      false,
+    );
+  }
+  await symlink(
+    path.join(options.generalRepository, "skills", "test"),
+    path.join(empty, "test"),
+  );
+  const partial = await doctor({ ...options, installedSkillRoots: [empty] });
+  assert.equal(partial.ok, false);
+  assert.equal(
+    partial.diagnostics.find((entry) => entry.id === "installed-sources")!
+      .status,
+    "fail",
+  );
+});
+
+test("installed bundle comparison detects changed references, scripts, and extra files", async (t) => {
+  const { options, root } = await fixture(t);
+  const source = path.join(options.stackRepository, "skills", "setup");
+  await mkdir(path.join(source, "references"));
+  await mkdir(path.join(source, "scripts"));
+  await writeFile(
+    path.join(source, "references", "guide.md"),
+    "Approved guidance",
+  );
+  await writeFile(
+    path.join(source, "scripts", "run.mjs"),
+    "export const approved = true;",
+  );
+  const installed = path.join(root, "copies");
+  await mkdir(installed);
+  await symlink(
+    path.join(options.generalRepository, "skills", "test"),
+    path.join(installed, "test"),
+  );
+  const copy = path.join(installed, "setup");
+  await cp(source, copy, { recursive: true });
+  const request = { ...options, installedSkillRoots: [installed] };
+  assert.equal((await doctor(request)).ok, true);
+  for (const file of ["references/guide.md", "scripts/run.mjs", "extra.md"]) {
+    await writeFile(path.join(copy, file), "Different installed content");
+    const result = await doctor(request);
+    assert.equal(result.ok, false);
+    assert.equal(
+      result.diagnostics.find((entry) => entry.id === "installed-ownership")!
+        .status,
+      "fail",
+    );
+    await rm(copy, { recursive: true });
+    await cp(source, copy, { recursive: true });
+  }
+  await rm(path.join(copy, "references", "guide.md"));
+  assert.equal((await doctor(request)).ok, false);
+  await rm(copy, { recursive: true });
+  await cp(source, copy, { recursive: true });
+  for (const target of [root, copy]) {
+    await symlink(target, path.join(copy, "unsafe-link"));
+    const unsafe = await doctor(request);
+    assert.equal(unsafe.ok, false);
+    assert.equal(
+      unsafe.diagnostics.find((entry) => entry.id === "installed-ownership")!
+        .status,
+      "fail",
+    );
+    await rm(path.join(copy, "unsafe-link"));
+  }
+});
+
+test("doctor rejects missing, relative, nonexistent, and stale saved source paths", async (t) => {
+  const { options, root } = await fixture(t);
+  const configurationFile = path.join(root, "saved.json");
+  const current = {
+    schemaVersion: 1,
+    mode: "plain-skills",
+    host: "pi",
+    rawLogRetentionDays: 30,
+    stackRepository: options.stackRepository,
+    generalRepository: options.generalRepository,
+  };
+  for (const sourcePaths of [
+    { stackRepository: undefined, generalRepository: undefined },
+    { generalRepository: "../general" },
+    { generalRepository: path.join(root, "absent") },
+    { generalRepository: options.stackRepository },
+  ]) {
+    await writeFile(
+      configurationFile,
+      JSON.stringify({ kriscardStack: { ...current, ...sourcePaths } }),
+    );
+    const result = await doctor({ ...options, configurationFile });
+    assert.equal(
+      result.diagnostics.find((entry) => entry.id === "configuration")!.status,
+      "fail",
+    );
+  }
 });
 
 test("doctor reports missing, mismatched, and modified skill sources", async (t) => {
@@ -180,7 +300,7 @@ test("installed copies from both hosts agree, but a conflicting global name fail
   await mkdir(second);
   await symlink(path.dirname(generalSkill), path.join(first, "test"));
   await symlink(path.dirname(generalSkill), path.join(second, "test"));
-  const installedSkillRoots = [first, second];
+  const installedSkillRoots = [first, second, ...options.installedSkillRoots!];
   assert.equal((await doctor({ ...options, installedSkillRoots })).ok, true);
   await rm(path.join(second, "test"));
   await mkdir(path.join(second, "test"));
@@ -195,11 +315,13 @@ test("installed copies from both hosts agree, but a conflicting global name fail
       .status,
     "fail",
   );
+  const uninspected = { ...options };
+  delete uninspected.installedSkillRoots;
   assert.equal(
-    (await doctor(options)).diagnostics.find(
+    (await doctor(uninspected)).diagnostics.find(
       (entry) => entry.id === "installed-ownership",
     )!.status,
-    "warning",
+    "fail",
   );
 });
 
@@ -207,6 +329,8 @@ test("doctor inspects saved settings without trusting persisted security claims 
   const { options, root } = await fixture(t);
   const configurationFile = path.join(root, "config.json");
   const settings = {
+    stackRepository: options.stackRepository,
+    generalRepository: options.generalRepository,
     schemaVersion: 1,
     mode: "plain-skills",
     host: "pi",

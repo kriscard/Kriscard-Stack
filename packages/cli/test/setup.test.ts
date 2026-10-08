@@ -64,7 +64,18 @@ async function fixture(t: { onTestFinished(fn: () => Promise<void>): void }) {
       revision,
     }),
   );
+  const installed = path.join(root, "installed");
+  await mkdir(installed);
+  await symlink(
+    path.join(stackRepository, "skills"),
+    path.join(installed, "setup"),
+  );
+  await symlink(
+    path.join(generalRepository, "skills"),
+    path.join(installed, "general"),
+  );
   const options: SetupOptions = {
+    installedSkillRoots: [installed],
     home,
     generalRepository,
     stackRepository,
@@ -96,6 +107,8 @@ test("the actual CLI previews setup without writing in a noninteractive home", a
       options.generalRepository,
       "--home",
       options.home,
+      "--installed-skills",
+      options.installedSkillRoots![0]!,
       "--mode",
       "plain-skills",
       "--host",
@@ -110,6 +123,21 @@ test("the actual CLI previews setup without writing in a noninteractive home", a
   assert.match(output, /No settings changed/);
   assert.deepEqual(await readdir(options.home), []);
 }, 25_000);
+
+test("setup cannot save settings with an empty installed root", async (t) => {
+  const { options, root } = await fixture(t);
+  const empty = path.join(root, "empty-installation");
+  await mkdir(empty);
+  const result = await setup(
+    { ...options, installedSkillRoots: [empty] },
+    async () => {
+      throw new Error("Invalid installation must not request confirmation");
+    },
+  );
+  assert.equal(result.applied, false);
+  assert.equal(result.proposal.diagnostics.ok, false);
+  assert.deepEqual(await readdir(options.home), []);
+});
 
 test("clean setup asks before writes and a second run changes nothing", async (t) => {
   const { options } = await fixture(t);
@@ -219,8 +247,29 @@ test("setup refuses shared directories, hard links, and occupied locks", async (
   await mkdir(path.join(directory, ".setup-lock"));
   await assert.rejects(
     setup(options, async () => true),
-    (error) =>
-      error instanceof Error && "code" in error && error.code === "EEXIST",
+    /another setup.*inspect.*permission/,
+  );
+  assert.deepEqual(await readdir(directory), [".setup-lock"]);
+});
+
+test("file symlinks and occupied locks explain a safe corrective action", async (t) => {
+  const { options, root } = await fixture(t);
+  const directory = path.join(options.home, ".config", "kriscard-stack");
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const destination = path.join(directory, "config.json");
+  const target = path.join(root, "unrelated.json");
+  await writeFile(target, "{}");
+  await symlink(target, destination);
+  await assert.rejects(
+    setup(options, async () => true),
+    /symlink.*Stow/,
+  );
+  assert.equal(await readFile(target, "utf8"), "{}");
+  await rm(destination);
+  await mkdir(path.join(directory, ".setup-lock"));
+  await assert.rejects(
+    setup(options, async () => true),
+    /another setup.*inspect.*permission/,
   );
   assert.deepEqual(await readdir(directory), [".setup-lock"]);
 });

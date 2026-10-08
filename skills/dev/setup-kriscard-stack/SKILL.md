@@ -21,8 +21,11 @@ before installing or resetting anything.
 Ask which installed skill directories the selected host reads, including shared
 Skills CLI directories. Supply each explicitly with `--installed-skills`; do not
 invent a dotfiles directory. An installed name with different content is a conflict,
-not permission to overwrite it. Use the Skills CLI for a separately approved skill
-installation from the verified local checkouts; do not copy reusable skills into Stack.
+not permission to overwrite it. Inspection compares full bundles, including references,
+scripts, and assets. Empty or omitted roots block setup, and at least one matching skill
+from each source must be installed; installing every available skill is not required.
+Use the Skills CLI for a separately approved skill installation from the verified local
+checkouts; do not copy reusable skills into Stack.
 
 Ask whether the user wants direct home configuration or a Stow package. Stow requires
 an explicit package root supplied by the user. Ask how many days to retain raw logs;

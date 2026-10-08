@@ -155,7 +155,15 @@ export async function setup(
     );
   await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
   const lock = path.join(path.dirname(destination), ".setup-lock");
-  await mkdir(lock, { mode: 0o700 });
+  try {
+    await mkdir(lock, { mode: 0o700 });
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "EEXIST")
+      throw new SetupError(
+        "A setup lock is occupied; check for another setup process, inspect configuration and backups, and obtain permission before removing a stale .setup-lock",
+      );
+    throw error;
+  }
   const temporary = path.join(
     path.dirname(destination),
     `.config-${randomUUID()}.tmp`,

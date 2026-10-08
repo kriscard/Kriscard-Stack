@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
 import { catalog, type SkillEntry } from "./catalog.js";
 import { jsonRecord, readExisting } from "./configuration.js";
+import { SetupError } from "./errors.js";
 
 const execute = promisify(execFile);
 
@@ -232,6 +233,7 @@ export async function doctor(options: DoctorOptions): Promise<{
   ] as [string, string][]) {
     try {
       const names = await catalog(root);
+      if (!names.length) throw new Error("Empty skill catalog");
       catalogs.set(id, names);
       add({
         id: `catalog:${id}`,
@@ -243,7 +245,7 @@ export async function doctor(options: DoctorOptions): Promise<{
         id: `catalog:${id}`,
         status: "fail",
         message: `${id} catalog is missing or invalid`,
-        fix: "Supply a readable skills directory with valid SKILL.md names and intact links.",
+        fix: "Supply a nonempty readable skills directory with valid names, complete bundles, and intact links contained within each skill.",
       });
     }
   }
@@ -298,6 +300,11 @@ export async function doctor(options: DoctorOptions): Promise<{
       installedOwners.set(skill.name, skill.sha256);
     }
   }
+  const installedCatalogsComplete =
+    !!options.installedSkillRoots?.length &&
+    options.installedSkillRoots.every((_, index) =>
+      catalogs.has(`installed-${index}`),
+    );
   add(
     installedConflicts.size
       ? {
@@ -308,15 +315,39 @@ export async function doctor(options: DoctorOptions): Promise<{
         }
       : {
           id: "installed-ownership",
-          status: options.installedSkillRoots?.length ? "pass" : "warning",
-          message: options.installedSkillRoots?.length
-            ? "Inspected installed skills match their source owners"
-            : "Installed skill directories were not inspected",
-          ...(!options.installedSkillRoots?.length
+          status: installedCatalogsComplete ? "pass" : "fail",
+          message: installedCatalogsComplete
+            ? "Inspected installed skill bundles match their source owners"
+            : "Installed skill directories are missing, empty, or could not be inspected",
+          ...(!installedCatalogsComplete
             ? {
                 fix: "Supply every skill directory used by the selected host with --installed-skills.",
               }
             : {}),
+        },
+  );
+
+  const missingSources = ["stack", "general"].filter(
+    (id) =>
+      !(catalogs.get(id) ?? []).some(
+        (skill) =>
+          installedOwners.get(skill.name) === skill.sha256 &&
+          !installedConflicts.has(skill.name),
+      ),
+  );
+  add(
+    missingSources.length
+      ? {
+          id: "installed-sources",
+          status: "fail",
+          message: `No matching installed skills from: ${missingSources.join(", ")}`,
+          fix: "Use the Skills CLI to install selected skills from both verified checkouts, then supply every host skill directory with --installed-skills. Setup will not guess paths or install them without permission.",
+        }
+      : {
+          id: "installed-sources",
+          status: "pass",
+          message:
+            "Matching installed skill bundles from both sources are present",
         },
   );
 
@@ -349,6 +380,27 @@ export async function doctor(options: DoctorOptions): Promise<{
           current.rawLogRetentionDays > 3650
         )
           throw new Error("Invalid saved configuration");
+        for (const [key, supplied] of [
+          ["stackRepository", options.stackRepository],
+          ["generalRepository", options.generalRepository],
+        ] as const) {
+          const saved = (current as Record<string, unknown>)[key];
+          if (typeof saved !== "string" || !path.isAbsolute(saved))
+            throw new SetupError(
+              "Saved source paths are missing or relative; rerun setup with the intended verified checkouts",
+            );
+          try {
+            if (
+              !(await stat(saved)).isDirectory() ||
+              (await realpath(saved)) !== (await realpath(supplied))
+            )
+              throw new Error("Different saved source");
+          } catch {
+            throw new SetupError(
+              "Saved source paths are unavailable or differ from the verified checkouts; rerun setup with the intended sources",
+            );
+          }
+        }
         if ("remote" in current) {
           const configured = current.remote;
           if (
@@ -383,11 +435,14 @@ export async function doctor(options: DoctorOptions): Promise<{
           message: "Saved settings use the supported schema",
         });
       }
-    } catch {
+    } catch (error) {
       add({
         id: "configuration",
         status: "fail",
-        message: "Saved settings are malformed, unsupported, or unsafe to read",
+        message:
+          error instanceof SetupError
+            ? error.message
+            : "Saved settings are malformed, unsupported, or unsafe to read",
         fix: "Inspect the existing config and backup; repair it or upgrade the CLI. Doctor has not changed the file.",
       });
     }
