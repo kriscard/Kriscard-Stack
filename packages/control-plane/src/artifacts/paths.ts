@@ -3,7 +3,7 @@ import { chmod, lstat, mkdir, open, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { ArtifactStoreError } from "./errors.js";
+import { artifactStoreError } from "./errors.js";
 
 const privateDirectoryMode = 0o700;
 export const privateFileMode = 0o600;
@@ -14,7 +14,7 @@ export function defaultArtifactRoot(
 ): string {
   const dataHome = environment.XDG_DATA_HOME?.trim();
   if (dataHome && !path.isAbsolute(dataHome)) {
-    throw new ArtifactStoreError(
+    throw artifactStoreError(
       "INVALID_PATH",
       "XDG_DATA_HOME must be an absolute path",
     );
@@ -46,7 +46,7 @@ export function assertSafeRelativePath(relativePath: string): string {
     relativePath.includes("\\") ||
     relativePath.includes("\0")
   ) {
-    throw new ArtifactStoreError(
+    throw artifactStoreError(
       "INVALID_PATH",
       `Artifact path must be a non-empty portable relative path: ${relativePath}`,
     );
@@ -67,7 +67,7 @@ export function assertSafeRelativePath(relativePath: string): string {
       );
     })
   ) {
-    throw new ArtifactStoreError(
+    throw artifactStoreError(
       "INVALID_PATH",
       `Artifact path contains an unsafe segment: ${relativePath}`,
     );
@@ -87,7 +87,7 @@ export function resolveWithin(root: string, relativePath: string): string {
     resolved !== resolvedRoot &&
     !resolved.startsWith(`${resolvedRoot}${path.sep}`)
   ) {
-    throw new ArtifactStoreError(
+    throw artifactStoreError(
       "INVALID_PATH",
       `Artifact path escapes its root: ${relativePath}`,
     );
@@ -101,13 +101,13 @@ async function inspectDirectory(
 ): Promise<void> {
   const info = await lstat(directory);
   if (info.isSymbolicLink()) {
-    throw new ArtifactStoreError(
+    throw artifactStoreError(
       "SYMLINK_ESCAPE",
       `Refusing symbolic-link directory: ${directory}`,
     );
   }
   if (!info.isDirectory()) {
-    throw new ArtifactStoreError(
+    throw artifactStoreError(
       "INVALID_PATH",
       `Expected directory: ${directory}`,
     );
@@ -116,7 +116,7 @@ async function inspectDirectory(
     await chmod(directory, privateDirectoryMode);
     await syncDirectoryEntry(directory);
   } else if ((info.mode & 0o777) !== privateDirectoryMode) {
-    throw new ArtifactStoreError(
+    throw artifactStoreError(
       "INVALID_PATH",
       `Existing artifact directory must already be private: ${directory}`,
     );
@@ -155,7 +155,7 @@ export async function assertSafeSourceFile(
   const resolvedRoot = path.resolve(sourceRoot);
   await inspectDirectoryWithoutChangingMode(resolvedRoot);
   if ((await realpath(resolvedRoot)) !== resolvedRoot) {
-    throw new ArtifactStoreError(
+    throw artifactStoreError(
       "SYMLINK_ESCAPE",
       `Source root changed or is not canonical: ${resolvedRoot}`,
     );
@@ -168,14 +168,14 @@ export async function assertSafeSourceFile(
     current = path.join(current, segment);
     const info = await lstat(current);
     if (info.isSymbolicLink()) {
-      throw new ArtifactStoreError(
+      throw artifactStoreError(
         "SYMLINK_ESCAPE",
         `Refusing symbolic-link artifact source: ${current}`,
       );
     }
     const isLast = index === segments.length - 1;
     if (isLast ? !info.isFile() : !info.isDirectory()) {
-      throw new ArtifactStoreError(
+      throw artifactStoreError(
         "INVALID_PATH",
         `Unexpected artifact source type: ${current}`,
       );
@@ -233,13 +233,13 @@ async function inspectDirectoryWithoutChangingMode(
 ): Promise<void> {
   const info = await lstat(directory);
   if (info.isSymbolicLink()) {
-    throw new ArtifactStoreError(
+    throw artifactStoreError(
       "SYMLINK_ESCAPE",
       `Refusing symbolic-link directory: ${directory}`,
     );
   }
   if (!info.isDirectory()) {
-    throw new ArtifactStoreError(
+    throw artifactStoreError(
       "INVALID_PATH",
       `Expected directory: ${directory}`,
     );

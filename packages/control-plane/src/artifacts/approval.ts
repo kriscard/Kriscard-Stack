@@ -1,4 +1,4 @@
-import { ArtifactStoreError } from "./errors.js";
+import { artifactStoreError } from "./errors.js";
 
 export interface ApprovedHashes {
   spec: string;
@@ -23,7 +23,7 @@ function extractHash(markdown: string, fileName: string): string {
   );
   const matches = [...markdown.matchAll(pattern)];
   if (matches.length !== 1 || !matches[0]?.[1]) {
-    throw new ArtifactStoreError(
+    throw artifactStoreError(
       "INVALID_ARTIFACT",
       `Approval must contain exactly one SHA-256 entry for ${fileName}`,
     );

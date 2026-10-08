@@ -5,7 +5,7 @@ import path from "node:path";
 
 import type * as z from "zod";
 
-import { ArtifactStoreError } from "./errors.js";
+import { artifactStoreError } from "./errors.js";
 import { privateFileMode, readFileWithoutFollowingSymlinks } from "./paths.js";
 
 export function sha256(content: Uint8Array): string {
@@ -77,7 +77,7 @@ export async function readParsedJson<Schema extends z.ZodType>(
   try {
     parsed = JSON.parse(content.toString("utf8"));
   } catch {
-    throw new ArtifactStoreError(
+    throw artifactStoreError(
       "INVALID_ARTIFACT",
       `Invalid JSON artifact: ${filePath}`,
     );
@@ -88,7 +88,7 @@ export async function readParsedJson<Schema extends z.ZodType>(
       .slice(0, 5)
       .map((issue) => `${issue.path.join(".") || "record"}: ${issue.message}`)
       .join("; ");
-    throw new ArtifactStoreError(
+    throw artifactStoreError(
       "INVALID_ARTIFACT",
       `Invalid artifact record ${filePath}: ${details}`,
     );

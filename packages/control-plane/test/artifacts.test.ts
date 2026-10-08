@@ -25,8 +25,8 @@ import {
 import {
   ArtifactBundleManifestSchema,
   ArtifactContextSchema,
-  ArtifactStore,
-  ArtifactStoreError,
+  createArtifactStore,
+  isArtifactStoreError,
   EvidenceArtifactContextSchema,
   MigrationJournalSchema,
   type ArtifactReference,
@@ -89,7 +89,7 @@ async function writeLegacyJournal(journalPath: string): Promise<void> {
 test("creates a missing private data hierarchy and rejects relative XDG paths", async (t) => {
   const temporary = await temporaryTestRoot(t);
   const root = path.join(temporary, "missing", "data", "kriscard-stack");
-  const store = new ArtifactStore({ root });
+  const store = createArtifactStore({ root });
 
   await store.initialize();
 
@@ -105,12 +105,11 @@ test("rejects existing shared roots without changing their permissions", async (
   const sharedRoot = path.join(temporary, "shared-root");
   await mkdir(sharedRoot, { mode: 0o755 });
   await chmod(sharedRoot, 0o755);
-  const store = new ArtifactStore({ root: sharedRoot });
+  const store = createArtifactStore({ root: sharedRoot });
 
   await assert.rejects(
     store.initialize(),
-    (error) =>
-      error instanceof ArtifactStoreError && error.code === "INVALID_PATH",
+    (error) => isArtifactStoreError(error) && error.code === "INVALID_PATH",
   );
   assert.equal((await stat(sharedRoot)).mode & 0o777, 0o755);
 });
@@ -164,7 +163,7 @@ test("rejects portable file-directory and reserved-manifest collisions", async (
   const context = createContext();
   const verdict = createVerdict();
   verdict.artifactReferences = ["report"];
-  const store = new ArtifactStore({ root: path.join(temporary, "store") });
+  const store = createArtifactStore({ root: path.join(temporary, "store") });
 
   await assert.rejects(
     store.importEvidence({
@@ -195,7 +194,9 @@ test("canonicalizes configured roots reached through an ancestor symlink", async
   await mkdir(actual);
   await symlink(actual, alias);
 
-  const store = new ArtifactStore({ root: path.join(alias, "private-store") });
+  const store = createArtifactStore({
+    root: path.join(alias, "private-store"),
+  });
   await store.initialize();
 
   assert.equal(store.root, path.join(await realpath(actual), "private-store"));
@@ -208,7 +209,7 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
   await writeFile(path.join(source, "notes", "decision.md"), "# Decision\n");
   const context = createContext();
   const revisionId = createId("revision", randomUUID());
-  const store = new ArtifactStore({ root: path.join(temporary, "store") });
+  const store = createArtifactStore({ root: path.join(temporary, "store") });
 
   const imported = await store.importApprovedRevision({
     context,
@@ -225,8 +226,7 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
       sourceDirectory: imported.directory,
       createdAt,
     }),
-    (error) =>
-      error instanceof ArtifactStoreError && error.code === "INVALID_PATH",
+    (error) => isArtifactStoreError(error) && error.code === "INVALID_PATH",
   );
 
   const manifest = await store.verify({
@@ -253,13 +253,11 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
   };
   await assert.rejects(
     store.export(reference, path.join(imported.directory, "copy")),
-    (error) =>
-      error instanceof ArtifactStoreError && error.code === "INVALID_PATH",
+    (error) => isArtifactStoreError(error) && error.code === "INVALID_PATH",
   );
   await assert.rejects(
     store.export(reference, temporary),
-    (error) =>
-      error instanceof ArtifactStoreError && error.code === "INVALID_PATH",
+    (error) => isArtifactStoreError(error) && error.code === "INVALID_PATH",
   );
   await assert.rejects(stat(path.join(imported.directory, "copy")), /ENOENT/);
   await store.export(reference, exportDirectory);
@@ -274,8 +272,7 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
   await writeFile(path.join(sharedExport, "unrelated.txt"), "keep me\n");
   await assert.rejects(
     store.export(reference, sharedExport),
-    (error) =>
-      error instanceof ArtifactStoreError && error.code === "INVALID_PATH",
+    (error) => isArtifactStoreError(error) && error.code === "INVALID_PATH",
   );
   assert.equal((await stat(sharedExport)).mode & 0o777, 0o755);
   assert.equal(
@@ -311,8 +308,7 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
   });
   await assert.rejects(
     store.export(reference, conflictingExport),
-    (error) =>
-      error instanceof ArtifactStoreError && error.code === "HASH_MISMATCH",
+    (error) => isArtifactStoreError(error) && error.code === "HASH_MISMATCH",
   );
 
   const outsideExport = path.join(temporary, "outside-export");
@@ -328,13 +324,12 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
   await symlink(outsideExport, path.join(nestedSymlinkExport, "supporting"));
   await assert.rejects(
     store.export(reference, nestedSymlinkExport),
-    (error) =>
-      error instanceof ArtifactStoreError && error.code === "SYMLINK_ESCAPE",
+    (error) => isArtifactStoreError(error) && error.code === "SYMLINK_ESCAPE",
   );
   assert.equal(await readFile(outsideTemporary, "utf8"), "must survive\n");
 
   const restoredRoot = path.join(temporary, "restored-store");
-  const restoredStore = new ArtifactStore({ root: restoredRoot });
+  const restoredStore = createArtifactStore({ root: restoredRoot });
   const restored = await restoredStore.restore(exportDirectory);
 
   assert.deepEqual(restored.manifest, manifest);
@@ -345,8 +340,7 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
   await assert.rejects(
     restoredStore.retireMigrationSource(restored.migrationId),
     (error) =>
-      error instanceof ArtifactStoreError &&
-      error.code === "MIGRATION_CONFLICT",
+      isArtifactStoreError(error) && error.code === "MIGRATION_CONFLICT",
   );
   assert.equal(
     await readFile(path.join(exportDirectory, "spec.md"), "utf8"),
@@ -354,8 +348,7 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
   );
   await assert.rejects(
     restoredStore.restore(restored.directory),
-    (error) =>
-      error instanceof ArtifactStoreError && error.code === "INVALID_PATH",
+    (error) => isArtifactStoreError(error) && error.code === "INVALID_PATH",
   );
 
   const restoreJournalPath = path.join(
@@ -364,6 +357,25 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
     `${restored.migrationId}.json`,
   );
   await writeLegacyJournal(restoreJournalPath);
+  const oldRestoreId = `restore-${digest(path.relative(restoredStore.root, restored.directory).split(path.sep).join("/")).slice(0, 24)}`;
+  const oldRestoreJournal = MigrationJournalSchema.parse(
+    JSON.parse(await readFile(restoreJournalPath, "utf8")),
+  );
+  oldRestoreJournal.migrationId = oldRestoreId;
+  await writeFile(
+    path.join(restoredRoot, ".migrations", `${oldRestoreId}.json`),
+    `${JSON.stringify(oldRestoreJournal, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  assert.equal(
+    (await restoredStore.resumeMigration(oldRestoreId)).directory,
+    restored.directory,
+  );
+  await assert.rejects(
+    restoredStore.retireMigrationSource(oldRestoreId),
+    (error) =>
+      isArtifactStoreError(error) && error.code === "MIGRATION_CONFLICT",
+  );
   assert.equal(
     (await restoredStore.restore(exportDirectory)).directory,
     restored.directory,
@@ -371,8 +383,7 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
   await assert.rejects(
     restoredStore.retireMigrationSource(restored.migrationId),
     (error) =>
-      error instanceof ArtifactStoreError &&
-      error.code === "MIGRATION_CONFLICT",
+      isArtifactStoreError(error) && error.code === "MIGRATION_CONFLICT",
   );
   assert.equal(
     await readFile(path.join(exportDirectory, "spec.md"), "utf8"),
@@ -390,8 +401,7 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
   );
   await assert.rejects(
     restoredStore.retireMigrationSource(restored.migrationId),
-    (error) =>
-      error instanceof ArtifactStoreError && error.code === "INVALID_PATH",
+    (error) => isArtifactStoreError(error) && error.code === "INVALID_PATH",
   );
   assert.equal(
     await readFile(path.join(restored.directory, "spec.md"), "utf8"),
@@ -404,7 +414,7 @@ test("repeating the same import is idempotent", async (t) => {
   const source = await createApprovedSource(temporary);
   const context = createContext();
   const revisionId = createId("revision", randomUUID());
-  const store = new ArtifactStore({ root: path.join(temporary, "store") });
+  const store = createArtifactStore({ root: path.join(temporary, "store") });
   const request = {
     context,
     revisionId,
@@ -422,11 +432,39 @@ test("repeating the same import is idempotent", async (t) => {
   assert.deepEqual(second.manifest, first.manifest);
 });
 
+test("legacy import IDs that resemble restores remain retireable", async (t) => {
+  const temporary = await temporaryTestRoot(t);
+  const sourceDirectory = await createApprovedSource(temporary);
+  const store = createArtifactStore({ root: path.join(temporary, "store") });
+  const migrationId = `restore-${"a".repeat(24)}`;
+  const request = {
+    context: createContext(),
+    revisionId: createId("revision", randomUUID()),
+    sourceDirectory,
+    migrationId,
+    createdAt,
+  };
+
+  const imported = await store.importApprovedRevision(request);
+  const reservedId = `restore-${digest(path.relative(store.root, imported.directory).split(path.sep).join("/")).slice(0, 24)}`;
+  await assert.rejects(
+    store.importApprovedRevision({ ...request, migrationId: reservedId }),
+    (error) =>
+      isArtifactStoreError(error) && error.code === "MIGRATION_CONFLICT",
+  );
+  await writeLegacyJournal(
+    path.join(store.root, ".migrations", `${migrationId}.json`),
+  );
+  await store.importApprovedRevision(request);
+  await store.retireMigrationSource(migrationId);
+  await assert.rejects(readFile(path.join(sourceDirectory, "spec.md")));
+});
+
 test("rejects approval hash mismatches", async (t) => {
   const temporary = await temporaryTestRoot(t);
   const source = await createApprovedSource(temporary);
   await writeFile(path.join(source, "spec.md"), "changed after approval\n");
-  const store = new ArtifactStore({ root: path.join(temporary, "store") });
+  const store = createArtifactStore({ root: path.join(temporary, "store") });
 
   await assert.rejects(
     store.importApprovedRevision({
@@ -435,8 +473,7 @@ test("rejects approval hash mismatches", async (t) => {
       sourceDirectory: source,
       createdAt,
     }),
-    (error) =>
-      error instanceof ArtifactStoreError && error.code === "HASH_MISMATCH",
+    (error) => isArtifactStoreError(error) && error.code === "HASH_MISMATCH",
   );
 });
 
@@ -453,7 +490,7 @@ test("rejects traversal and source or destination symlink escapes", async (t) =>
   const context = createContext();
   const revisionId = createId("revision", randomUUID());
   const storeRoot = path.join(temporary, "store");
-  const store = new ArtifactStore({ root: storeRoot });
+  const store = createArtifactStore({ root: storeRoot });
 
   await assert.rejects(
     store.importApprovedRevision({
@@ -463,8 +500,7 @@ test("rejects traversal and source or destination symlink escapes", async (t) =>
       supportingFiles: ["../outside/secret.md"],
       createdAt,
     }),
-    (error) =>
-      error instanceof ArtifactStoreError && error.code === "INVALID_PATH",
+    (error) => isArtifactStoreError(error) && error.code === "INVALID_PATH",
   );
   await assert.rejects(
     store.importApprovedRevision({
@@ -474,8 +510,7 @@ test("rejects traversal and source or destination symlink escapes", async (t) =>
       supportingFiles: [".spec.md.kriscard-tmp"],
       createdAt,
     }),
-    (error) =>
-      error instanceof ArtifactStoreError && error.code === "INVALID_PATH",
+    (error) => isArtifactStoreError(error) && error.code === "INVALID_PATH",
   );
   await assert.rejects(
     store.importApprovedRevision({
@@ -485,8 +520,7 @@ test("rejects traversal and source or destination symlink escapes", async (t) =>
       supportingFiles: ["linked.md"],
       createdAt,
     }),
-    (error) =>
-      error instanceof ArtifactStoreError && error.code === "SYMLINK_ESCAPE",
+    (error) => isArtifactStoreError(error) && error.code === "SYMLINK_ESCAPE",
   );
 
   await store.initialize();
@@ -499,8 +533,7 @@ test("rejects traversal and source or destination symlink escapes", async (t) =>
       migrationId: "escape-migration",
       createdAt,
     }),
-    (error) =>
-      error instanceof ArtifactStoreError && error.code === "SYMLINK_ESCAPE",
+    (error) => isArtifactStoreError(error) && error.code === "SYMLINK_ESCAPE",
   );
   assert.equal(
     await readFile(path.join(outside, "secret.md"), "utf8"),
@@ -515,7 +548,7 @@ test("resumes after interruption without replacing copied files", async (t) => {
   const revisionId = createId("revision", randomUUID());
   const storeRoot = path.join(temporary, "store");
   let interrupted = false;
-  const interruptedStore = new ArtifactStore({
+  const interruptedStore = createArtifactStore({
     root: storeRoot,
     onCheckpoint(checkpoint) {
       if (!interrupted && checkpoint.phase === "file_copied") {
@@ -561,7 +594,7 @@ test("resumes after interruption without replacing copied files", async (t) => {
     "interrupted write",
     { mode: 0o600 },
   );
-  const resumedStore = new ArtifactStore({ root: storeRoot });
+  const resumedStore = createArtifactStore({ root: storeRoot });
   const resumed = await resumedStore.resumeMigration("restartable-import");
   assert.equal(resumed.manifest.kind, "revision");
   assert.equal(
@@ -587,7 +620,7 @@ test("retires legacy sources only after commit and resumes retirement", async (t
   const revisionId = createId("revision", randomUUID());
   let interrupted = false;
   const storeRoot = path.join(temporary, "store");
-  const interruptingStore = new ArtifactStore({
+  const interruptingStore = createArtifactStore({
     root: storeRoot,
     onCheckpoint(checkpoint) {
       if (!interrupted && checkpoint.phase === "source_retired") {
@@ -611,7 +644,7 @@ test("retires legacy sources only after commit and resumes retirement", async (t
     interruptingStore.retireMigrationSource("retirement-import"),
     /retirement interrupted/,
   );
-  const resumedStore = new ArtifactStore({ root: storeRoot });
+  const resumedStore = createArtifactStore({ root: storeRoot });
   const resumed = await resumedStore.resumeMigration("retirement-import");
 
   assert.equal(resumed.manifest.kind, "revision");
@@ -639,7 +672,7 @@ test("immutable destinations cannot be replaced by different approved content", 
   const source = await createApprovedSource(temporary);
   const context = createContext();
   const revisionId = createId("revision", randomUUID());
-  const store = new ArtifactStore({ root: path.join(temporary, "store") });
+  const store = createArtifactStore({ root: path.join(temporary, "store") });
   await store.importApprovedRevision({
     context,
     revisionId,
@@ -661,8 +694,7 @@ test("immutable destinations cannot be replaced by different approved content", 
       createdAt,
     }),
     (error) =>
-      error instanceof ArtifactStoreError &&
-      error.code === "IMMUTABLE_CONFLICT",
+      isArtifactStoreError(error) && error.code === "IMMUTABLE_CONFLICT",
   );
 });
 
@@ -673,7 +705,7 @@ test("a conflicting restore cannot poison a later genuine restore", async (t) =>
   const genuineSource = await createApprovedSource(
     path.join(temporary, "genuine-source"),
   );
-  const destinationStore = new ArtifactStore({
+  const destinationStore = createArtifactStore({
     root: path.join(temporary, "destination-store"),
   });
   const reference: ArtifactReference = {
@@ -696,7 +728,7 @@ test("a conflicting restore cannot poison a later genuine restore", async (t) =>
     path.join(temporary, "conflicting-source"),
     "# Conflicting specification\n",
   );
-  const conflictingStore = new ArtifactStore({
+  const conflictingStore = createArtifactStore({
     root: path.join(temporary, "conflicting-store"),
   });
   await conflictingStore.importApprovedRevision({
@@ -711,8 +743,7 @@ test("a conflicting restore cannot poison a later genuine restore", async (t) =>
   await assert.rejects(
     destinationStore.restore(conflictingExport),
     (error) =>
-      error instanceof ArtifactStoreError &&
-      error.code === "IMMUTABLE_CONFLICT",
+      isArtifactStoreError(error) && error.code === "IMMUTABLE_CONFLICT",
   );
   const restored = await destinationStore.restore(genuineExport);
   assert.equal(restored.manifest.kind, "revision");
@@ -723,7 +754,7 @@ test("restore rejects self-consistent manifests with forged relationships", asyn
   const context = createContext();
   const revisionId = createId("revision", randomUUID());
   const source = await createApprovedSource(temporary);
-  const sourceStore = new ArtifactStore({
+  const sourceStore = createArtifactStore({
     root: path.join(temporary, "source-store"),
   });
   await sourceStore.importApprovedRevision({
@@ -752,7 +783,7 @@ test("restore rejects self-consistent manifests with forged relationships", asyn
     mode: 0o600,
   });
 
-  const restoredStore = new ArtifactStore({
+  const restoredStore = createArtifactStore({
     root: path.join(temporary, "restored-store"),
   });
   await assert.rejects(
@@ -768,7 +799,7 @@ test("stores and verifies readable final evidence", async (t) => {
   await writeFile(path.join(source, "evidence.md"), "# Verification\nPassed\n");
   const context = createContext();
   const verdict = createVerdict();
-  const store = new ArtifactStore({ root: path.join(temporary, "store") });
+  const store = createArtifactStore({ root: path.join(temporary, "store") });
 
   const imported = await store.importEvidence({
     context,
@@ -799,7 +830,7 @@ test("restore rejects forged evidence IDs and missing artifact references", asyn
   await writeFile(path.join(source, "evidence.md"), "# Verification\nPassed\n");
   const context = createContext();
   const verdict = createVerdict();
-  const sourceStore = new ArtifactStore({
+  const sourceStore = createArtifactStore({
     root: path.join(temporary, "source-store"),
   });
   await sourceStore.importEvidence({
@@ -828,7 +859,7 @@ test("restore rejects forged evidence IDs and missing artifact references", asyn
   await writeFile(manifestPath, `${JSON.stringify(forged, null, 2)}\n`, {
     mode: 0o600,
   });
-  const restoredStore = new ArtifactStore({
+  const restoredStore = createArtifactStore({
     root: path.join(temporary, "restored-store"),
   });
   await assert.rejects(
@@ -852,7 +883,7 @@ test("verification rejects permission weakening and untracked files", async (t) 
   const source = await createApprovedSource(temporary);
   const context = createContext();
   const revisionId = createId("revision", randomUUID());
-  const store = new ArtifactStore({ root: path.join(temporary, "store") });
+  const store = createArtifactStore({ root: path.join(temporary, "store") });
   const imported = await store.importApprovedRevision({
     context,
     revisionId,

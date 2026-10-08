@@ -4,6 +4,15 @@ The durable Kriscard Stack control-plane package. T3 introduces its private immu
 
 ## Artifact store
 
+```ts
+import { createArtifactStore } from "@kriscard/control-plane/artifacts";
+
+const store = createArtifactStore();
+await store.initialize();
+```
+
+This Node-only package publishes standard ESM files and declarations through its package exports. A browser bundler would add a build step without changing the filesystem behavior or making the interface simpler.
+
 Approved revisions and final evidence are stored outside application repositories under:
 
 ```text
