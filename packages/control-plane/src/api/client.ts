@@ -1,6 +1,8 @@
 import type { CommandEvent, CommandRecord } from "../runtime/commands.js";
 import { API_VERSION } from "./protocol.js";
 
+const MAX_EVENT_FRAME_CHARS = 1024 * 1024;
+
 export class ControlPlaneApiError extends Error {
   constructor(
     readonly status: number,
@@ -115,10 +117,10 @@ export function createControlPlaneClient(options: {
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
-          if (buffer.length > 1024 * 1024)
-            throw new ControlPlaneApiError(502, "EVENT_TOO_LARGE");
           let end: number;
           while ((end = buffer.indexOf("\n\n")) !== -1) {
+            if (end > MAX_EVENT_FRAME_CHARS)
+              throw new ControlPlaneApiError(502, "EVENT_TOO_LARGE");
             const frame = buffer.slice(0, end);
             buffer = buffer.slice(end + 2);
             const type = frame
@@ -146,6 +148,8 @@ export function createControlPlaneClient(options: {
               throw new ControlPlaneApiError(502, "INVALID_EVENT");
             yield event;
           }
+          if (buffer.length > MAX_EVENT_FRAME_CHARS)
+            throw new ControlPlaneApiError(502, "EVENT_TOO_LARGE");
         }
       } finally {
         await reader.cancel().catch(() => {});

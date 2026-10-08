@@ -278,6 +278,73 @@ test("concurrent clients cannot both submit against the same version", async (t)
   assert.equal(Object.keys((await client.state()).commands).length, 1);
 });
 
+test("the client accepts a coalesced backlog of individually bounded SSE frames", async () => {
+  const frames = Array.from({ length: 2_048 }, (_, index) => {
+    const position = index + 1;
+    return `id: ${position}\nevent: command\ndata: ${JSON.stringify({
+      position,
+      command: {
+        key: "k".repeat(200),
+        operation: "probe",
+        replayClass: "idempotent_with_key",
+        taskId: position,
+        status: "completed",
+        attempts: 1,
+        receipt: { reference: "r".repeat(256), completedAt: 0 },
+      },
+    })}\n\n`;
+  });
+  const chunk = Buffer.from(frames.join(""));
+  assert.ok(chunk.length > 1_048_576);
+  const transport: typeof fetch = async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(chunk);
+          controller.close();
+        },
+      }),
+      { status: 200, headers: { "X-Kriscard-Api-Version": "1" } },
+    );
+  const client = createControlPlaneClient({
+    url: "http://127.0.0.1:1",
+    deviceId,
+    credential,
+    fetch: transport,
+  });
+  const positions: number[] = [];
+  for await (const event of client.events(0)) positions.push(event.position);
+  assert.equal(positions.length, 2_048);
+  assert.equal(positions.at(-1), 2_048);
+});
+
+test("the client still rejects a single oversized SSE frame", async () => {
+  const chunk = Buffer.from(
+    `id: 1\nevent: command\ndata: ${"x".repeat(1_100_000)}\n\n`,
+  );
+  const transport: typeof fetch = async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(chunk);
+          controller.close();
+        },
+      }),
+      { status: 200, headers: { "X-Kriscard-Api-Version": "1" } },
+    );
+  const client = createControlPlaneClient({
+    url: "http://127.0.0.1:1",
+    deviceId,
+    credential,
+    fetch: transport,
+  });
+  await assert.rejects(
+    client.events(0).next(),
+    (error) =>
+      error instanceof ControlPlaneApiError && error.code === "EVENT_TOO_LARGE",
+  );
+});
+
 test("SSE delivers ordered positions after a disconnect and detects invalid positions", async (t) => {
   const { runtime, client } = await fixture(t);
   const stream = client.events(0);
