@@ -90,7 +90,7 @@ export const MigrationJournalSchema = z.looseObject({
   destinationRelative: z.string().min(1),
   manifest: ArtifactBundleManifestSchema,
   sources: z.array(MigrationSourceSchema).min(1),
-  completedFiles: z.array(z.string().min(1)),
+  completedFiles: z.array(z.string().min(1)).optional(),
   retiredFiles: z.array(z.string().min(1)).optional(),
   updatedAt: TimestampSchema,
 });

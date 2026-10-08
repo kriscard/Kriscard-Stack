@@ -406,7 +406,6 @@ export class ArtifactStore {
         destinationRelative: prepared.destinationRelative,
         manifest: prepared.manifest,
         sources: prepared.sources,
-        completedFiles: prepared.manifest.files.map((file) => file.path),
         retiredFiles: [],
         updatedAt: new Date().toISOString(),
       };
@@ -423,7 +422,6 @@ export class ArtifactStore {
       destinationRelative: prepared.destinationRelative,
       manifest: prepared.manifest,
       sources: prepared.sources,
-      completedFiles: [],
       retiredFiles: [],
       updatedAt: new Date().toISOString(),
     };
@@ -466,7 +464,6 @@ export class ArtifactStore {
 
     const stagingRelative = `.staging/${journal.migrationId}`;
     const staging = await ensurePrivateDirectory(this.root, stagingRelative);
-    const completed = new Set(journal.completedFiles);
 
     for (const source of journal.sources) {
       const expected = journal.manifest.files.find(
@@ -502,16 +499,6 @@ export class ArtifactStore {
           phase: "file_copied",
           storedPath: source.storedPath,
         });
-      }
-
-      if (!completed.has(source.storedPath)) {
-        completed.add(source.storedPath);
-        journal = {
-          ...journal,
-          completedFiles: [...completed],
-          updatedAt: new Date().toISOString(),
-        };
-        await this.writeJournal(journal);
       }
     }
 

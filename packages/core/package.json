@@ -11,8 +11,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "rm -rf .test-dist && tsc -p tsconfig.test.json && node --test .test-dist/test/*.test.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "test": "pnpm --dir ../.. exec vitest run packages/core/test",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit"
   },
   "dependencies": {
     "zod": "4.6.5"

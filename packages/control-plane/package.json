@@ -11,8 +11,8 @@
   },
   "scripts": {
     "build": "pnpm --filter @kriscard/core build && tsc -p tsconfig.json",
-    "test": "pnpm --filter @kriscard/core build && rm -rf .test-dist && tsc -p tsconfig.test.json && node --test .test-dist/test/*.test.js",
-    "typecheck": "pnpm --filter @kriscard/core build && tsc -p tsconfig.json --noEmit"
+    "test": "pnpm --filter @kriscard/core build && pnpm --dir ../.. exec vitest run packages/control-plane/test",
+    "typecheck": "pnpm --filter @kriscard/core build && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit"
   },
   "dependencies": {
     "@kriscard/core": "workspace:*",

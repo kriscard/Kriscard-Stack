@@ -14,7 +14,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test, { type TestContext } from "node:test";
+import { test, type TestContext } from "vitest";
 
 import {
   createId,
@@ -23,15 +23,20 @@ import {
 } from "@kriscard/core";
 
 import {
+  ArtifactBundleManifestSchema,
   ArtifactContextSchema,
   ArtifactStore,
   ArtifactStoreError,
   EvidenceArtifactContextSchema,
+  MigrationJournalSchema,
+  type ArtifactReference,
+  type EvidenceArtifactContext,
+} from "../src/artifacts/index.js";
+import {
   assertSafeRelativePath,
   defaultArtifactRoot,
   portablePathKey,
-  type EvidenceArtifactContext,
-} from "../src/artifacts/index.js";
+} from "../src/artifacts/paths.js";
 
 const createdAt = "2026-10-08T00:00:00Z";
 
@@ -65,11 +70,9 @@ async function createApprovedSource(
   return source;
 }
 
-async function temporaryTestRoot(t: TestContext): Promise<string> {
+async function temporaryTestRoot(context: TestContext): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), "kriscard-artifacts-"));
-  t.after(async () => {
-    await rm(root, { recursive: true, force: true });
-  });
+  context.onTestFinished(() => rm(root, { recursive: true, force: true }));
   return root;
 }
 
@@ -85,6 +88,21 @@ test("creates a missing private data hierarchy and rejects relative XDG paths", 
     () => defaultArtifactRoot({ XDG_DATA_HOME: "relative/data" }, temporary),
     /XDG_DATA_HOME must be an absolute path/,
   );
+});
+
+test("rejects existing shared roots without changing their permissions", async (t) => {
+  const temporary = await temporaryTestRoot(t);
+  const sharedRoot = path.join(temporary, "shared-root");
+  await mkdir(sharedRoot, { mode: 0o755 });
+  await chmod(sharedRoot, 0o755);
+  const store = new ArtifactStore({ root: sharedRoot });
+
+  await assert.rejects(
+    store.initialize(),
+    (error) =>
+      error instanceof ArtifactStoreError && error.code === "INVALID_PATH",
+  );
+  assert.equal((await stat(sharedRoot)).mode & 0o777, 0o755);
 });
 
 test("requires branch association and an explicit PR lifecycle", () => {
@@ -217,8 +235,8 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
   );
 
   const exportDirectory = path.join(temporary, "exported-revision");
-  const reference = {
-    kind: "revision" as const,
+  const reference: ArtifactReference = {
+    kind: "revision",
     repositoryFingerprint: context.repositoryFingerprint,
     workItemId: context.workItemId,
     revisionId,
@@ -238,6 +256,21 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
   assert.equal(
     await store.export(reference, exportDirectory),
     await realpath(exportDirectory),
+  );
+
+  const sharedExport = path.join(temporary, "shared-export");
+  await mkdir(sharedExport, { mode: 0o755 });
+  await chmod(sharedExport, 0o755);
+  await writeFile(path.join(sharedExport, "unrelated.txt"), "keep me\n");
+  await assert.rejects(
+    store.export(reference, sharedExport),
+    (error) =>
+      error instanceof ArtifactStoreError && error.code === "INVALID_PATH",
+  );
+  assert.equal((await stat(sharedExport)).mode & 0o777, 0o755);
+  assert.equal(
+    await readFile(path.join(sharedExport, "unrelated.txt"), "utf8"),
+    "keep me\n",
   );
 
   const partialExport = path.join(temporary, "partial-export");
@@ -320,9 +353,9 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
     ".migrations",
     `${restored.migrationId}.json`,
   );
-  const unsafeJournal = JSON.parse(
-    await readFile(restoreJournalPath, "utf8"),
-  ) as { sourceDirectory: string; sourceDisposition: string };
+  const unsafeJournal = MigrationJournalSchema.parse(
+    JSON.parse(await readFile(restoreJournalPath, "utf8")),
+  );
   unsafeJournal.sourceDirectory = restored.directory;
   unsafeJournal.sourceDisposition = "retire";
   await writeFile(
@@ -475,6 +508,21 @@ test("resumes after interruption without replacing copied files", async (t) => {
     /simulated interruption/,
   );
 
+  const interruptedJournalPath = path.join(
+    storeRoot,
+    ".migrations",
+    "restartable-import.json",
+  );
+  const oldJournal = MigrationJournalSchema.parse(
+    JSON.parse(await readFile(interruptedJournalPath, "utf8")),
+  );
+  assert.equal(oldJournal.completedFiles, undefined);
+  oldJournal.completedFiles = ["spec.md"];
+  await writeFile(
+    interruptedJournalPath,
+    `${JSON.stringify(oldJournal, null, 2)}\n`,
+    { mode: 0o600 },
+  );
   await writeFile(
     path.join(
       storeRoot,
@@ -492,12 +540,14 @@ test("resumes after interruption without replacing copied files", async (t) => {
     await readFile(path.join(resumed.directory, "plan.md"), "utf8"),
     "# Plan\n",
   );
-  const journal = JSON.parse(
-    await readFile(
-      path.join(storeRoot, ".migrations", "restartable-import.json"),
-      "utf8",
+  const journal = MigrationJournalSchema.parse(
+    JSON.parse(
+      await readFile(
+        path.join(storeRoot, ".migrations", "restartable-import.json"),
+        "utf8",
+      ),
     ),
-  ) as { status: string };
+  );
   assert.equal(journal.status, "committed");
 });
 
@@ -541,13 +591,16 @@ test("retires legacy sources only after commit and resumes retirement", async (t
     await readFile(path.join(source, "unrelated.txt"), "utf8"),
     "keep me\n",
   );
-  const journal = JSON.parse(
-    await readFile(
-      path.join(storeRoot, ".migrations", "retirement-import.json"),
-      "utf8",
+  const journal = MigrationJournalSchema.parse(
+    JSON.parse(
+      await readFile(
+        path.join(storeRoot, ".migrations", "retirement-import.json"),
+        "utf8",
+      ),
     ),
-  ) as { status: string };
+  );
   assert.equal(journal.status, "retired");
+  assert.equal("completedFiles" in journal, false);
 });
 
 test("immutable destinations cannot be replaced by different approved content", async (t) => {
@@ -592,8 +645,8 @@ test("a conflicting restore cannot poison a later genuine restore", async (t) =>
   const destinationStore = new ArtifactStore({
     root: path.join(temporary, "destination-store"),
   });
-  const reference = {
-    kind: "revision" as const,
+  const reference: ArtifactReference = {
+    kind: "revision",
     repositoryFingerprint: context.repositoryFingerprint,
     workItemId: context.workItemId,
     revisionId,
@@ -659,9 +712,9 @@ test("restore rejects self-consistent manifests with forged relationships", asyn
     exportDirectory,
   );
   const manifestPath = path.join(exportDirectory, "manifest.json");
-  const forged = JSON.parse(await readFile(manifestPath, "utf8")) as {
-    files: Array<{ path: string }>;
-  };
+  const forged = ArtifactBundleManifestSchema.parse(
+    JSON.parse(await readFile(manifestPath, "utf8")),
+  );
   forged.files = forged.files.filter((file) => file.path !== "spec.md");
   await unlink(path.join(exportDirectory, "spec.md"));
   await writeFile(manifestPath, `${JSON.stringify(forged, null, 2)}\n`, {
@@ -736,10 +789,10 @@ test("restore rejects forged evidence IDs and missing artifact references", asyn
     exportDirectory,
   );
   const manifestPath = path.join(exportDirectory, "manifest.json");
-  const forged = JSON.parse(await readFile(manifestPath, "utf8")) as {
-    verdictId: string;
-    verdict: { id: string; artifactReferences: string[] };
-  };
+  const forged = ArtifactBundleManifestSchema.parse(
+    JSON.parse(await readFile(manifestPath, "utf8")),
+  );
+  if (forged.kind !== "evidence") throw new Error("Expected evidence bundle");
   forged.verdictId = createId("verdict", randomUUID());
   await writeFile(manifestPath, `${JSON.stringify(forged, null, 2)}\n`, {
     mode: 0o600,
@@ -775,8 +828,8 @@ test("verification rejects permission weakening and untracked files", async (t) 
     sourceDirectory: source,
     createdAt,
   });
-  const reference = {
-    kind: "revision" as const,
+  const reference: ArtifactReference = {
+    kind: "revision",
     repositoryFingerprint: context.repositoryFingerprint,
     workItemId: context.workItemId,
     revisionId,

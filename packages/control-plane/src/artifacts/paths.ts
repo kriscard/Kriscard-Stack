@@ -95,7 +95,10 @@ export function resolveWithin(root: string, relativePath: string): string {
   return resolved;
 }
 
-async function inspectDirectory(directory: string): Promise<void> {
+async function inspectDirectory(
+  directory: string,
+  created = false,
+): Promise<void> {
   const info = await lstat(directory);
   if (info.isSymbolicLink()) {
     throw new ArtifactStoreError(
@@ -109,8 +112,15 @@ async function inspectDirectory(directory: string): Promise<void> {
       `Expected directory: ${directory}`,
     );
   }
-  await chmod(directory, privateDirectoryMode);
-  await syncDirectoryEntry(directory);
+  if (created) {
+    await chmod(directory, privateDirectoryMode);
+    await syncDirectoryEntry(directory);
+  } else if ((info.mode & 0o777) !== privateDirectoryMode) {
+    throw new ArtifactStoreError(
+      "INVALID_PATH",
+      `Existing artifact directory must already be private: ${directory}`,
+    );
+  }
 }
 
 export async function ensurePrivateDirectory(
@@ -132,7 +142,7 @@ export async function ensurePrivateDirectory(
     } catch (error) {
       if (!isAlreadyExists(error)) throw error;
     }
-    await inspectDirectory(current);
+    await inspectDirectory(current, created);
     if (created) await syncDirectoryEntry(path.dirname(current));
   }
   return current;
@@ -212,7 +222,7 @@ async function createPrivateRoot(resolvedRoot: string): Promise<void> {
     } catch (error) {
       if (!isAlreadyExists(error)) throw error;
     }
-    await inspectDirectory(directory);
+    await inspectDirectory(directory, created);
     if (created) await syncDirectoryEntry(path.dirname(directory));
   }
   await inspectDirectory(resolvedRoot);
