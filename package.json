@@ -6,13 +6,13 @@
   "type": "module",
   "packageManager": "pnpm@10.34.4",
   "engines": {
-    "node": ">=20",
+    "node": ">=24",
     "pnpm": ">=10"
   },
   "scripts": {
     "validate": "node scripts/validate-workspace.mjs && node scripts/validate-skill-catalog.mjs",
     "validate:catalogs": "node scripts/validate-skill-catalog.mjs",
-    "test": "pnpm --filter @kriscard/core build && vitest run",
+    "test": "pnpm --filter @kriscard/control-plane build && vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm --filter './packages/*' --if-present typecheck",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

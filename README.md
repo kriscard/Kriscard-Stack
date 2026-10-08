@@ -20,7 +20,7 @@ The compatible Skills revision is recorded in [`config/skills-source.json`](conf
 
 ## Development
 
-Requirements: Node.js 20 or newer and pnpm 10 or newer. Tests use Vitest across the workspace.
+Requirements: an up-to-date Node.js 24 LTS release (or newer) and pnpm 10 or newer. CI tests both Node 24 LTS and Node 26 Current with Vitest.
 
 ```bash
 pnpm install
