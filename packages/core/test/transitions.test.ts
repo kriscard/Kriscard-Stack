@@ -6,7 +6,11 @@ import {
   transitionExecutionUnit,
   transitionWorkItem,
 } from "../src/index.js";
-import { passingEvidence } from "./helpers.js";
+import {
+  createTestUnit,
+  createTestWorkItem,
+  passingEvidence,
+} from "./helpers.js";
 
 const common = {
   reason: "Approved action",
@@ -21,7 +25,7 @@ test("transitions reject non-canonical timestamps", () => {
       transitionWorkItem({
         ...common,
         at: "2026-10-08",
-        from: "requirements_review",
+        workItem: createTestWorkItem("requirements_review"),
         to: "design_review",
         actor: "human",
       }),
@@ -30,11 +34,13 @@ test("transitions reject non-canonical timestamps", () => {
 });
 
 test("requirements approval requires a human actor", () => {
+  const workItem = createTestWorkItem("requirements_review");
+
   assert.throws(
     () =>
       transitionWorkItem({
         ...common,
-        from: "requirements_review",
+        workItem,
         to: "design_review",
         actor: "control_plane",
       }),
@@ -45,11 +51,12 @@ test("requirements approval requires a human actor", () => {
 
   const transition = transitionWorkItem({
     ...common,
-    from: "requirements_review",
+    workItem,
     to: "design_review",
     actor: "human",
   });
   assert.equal(transition.subject, "work_item");
+  assert.equal(transition.from, "requirements_review");
 });
 
 test("work items cannot skip approved stages", () => {
@@ -57,7 +64,7 @@ test("work items cannot skip approved stages", () => {
     () =>
       transitionWorkItem({
         ...common,
-        from: "requirements_review",
+        workItem: createTestWorkItem("requirements_review"),
         to: "approved",
         actor: "human",
       }),
@@ -68,22 +75,18 @@ test("work items cannot skip approved stages", () => {
 
   const paused = transitionWorkItem({
     ...common,
-    from: "requirements_review",
+    workItem: createTestWorkItem("requirements_review"),
     to: "paused",
     actor: "system",
   });
   assert.equal(paused.pausedFrom, "requirements_review");
-  const pausedFrom = paused.pausedFrom;
-  if (!pausedFrom)
-    assert.fail("Paused transition did not record its prior state");
 
   assert.throws(
     () =>
       transitionWorkItem({
         ...common,
-        from: "paused",
+        workItem: createTestWorkItem("paused", "requirements_review"),
         to: "plan_review",
-        pausedFrom,
         actor: "system",
       }),
     (error) =>
@@ -94,108 +97,184 @@ test("work items cannot skip approved stages", () => {
   assert.equal(
     transitionWorkItem({
       ...common,
-      from: "paused",
+      workItem: createTestWorkItem("paused", "requirements_review"),
       to: "requirements_review",
-      pausedFrom,
       actor: "system",
     }).to,
     "requirements_review",
   );
 });
 
-test("work-item readiness requires a verifier and current evidence", () => {
+test("work-item readiness requires current evidence for every unit", () => {
+  const workItem = createTestWorkItem("verifying");
+  const first = createTestUnit(workItem);
+  const second = createTestUnit(workItem);
+  second.taskIds = ["T2"];
+  second.expectedEvidenceIds = ["V2"];
+  const evidence = {
+    units: [first, second],
+    evidence: [passingEvidence(first), passingEvidence(second)],
+  };
+
   assert.throws(
     () =>
       transitionWorkItem({
         ...common,
-        from: "verifying",
+        workItem,
         to: "ready_for_human",
         actor: "implementer",
-        evidence: passingEvidence(),
+        evidence,
       }),
     (error) =>
       error instanceof CoreInvariantError &&
       error.code === "UNAUTHORIZED_TRANSITION",
   );
 
-  assert.throws(
-    () =>
-      transitionWorkItem({
-        ...common,
-        from: "verifying",
-        to: "ready_for_human",
-        actor: "verifier",
-      }),
-    (error) =>
-      error instanceof CoreInvariantError &&
-      error.code === "INVALID_TRANSITION",
+  assert.throws(() =>
+    transitionWorkItem({
+      ...common,
+      workItem,
+      to: "ready_for_human",
+      actor: "verifier",
+    }),
   );
 
-  const staleEvidence = passingEvidence();
+  const staleEvidence = passingEvidence(second);
   staleEvidence.currentHeadSha = "c".repeat(40);
   assert.throws(() =>
     transitionWorkItem({
       ...common,
-      from: "verifying",
+      workItem,
       to: "ready_for_human",
       actor: "verifier",
-      evidence: staleEvidence,
+      evidence: {
+        units: [first, second],
+        evidence: [passingEvidence(first), staleEvidence],
+      },
     }),
   );
 
   assert.equal(
     transitionWorkItem({
       ...common,
-      from: "verifying",
+      workItem,
       to: "ready_for_human",
       actor: "verifier",
-      evidence: passingEvidence(),
+      evidence,
     }).to,
     "ready_for_human",
   );
 });
 
-test("execution-unit readiness requires a verifier and current evidence", () => {
+test("paused work items cannot bypass readiness checks", () => {
+  const workItem = createTestWorkItem("paused", "ready_for_human");
+  const unit = createTestUnit(workItem);
+  const evidence = { units: [unit], evidence: [passingEvidence(unit)] };
+
   assert.throws(
     () =>
-      transitionExecutionUnit({
+      transitionWorkItem({
         ...common,
-        from: "verifying",
-        to: "verified",
-        actor: "implementer",
-        evidence: passingEvidence(),
+        workItem,
+        to: "ready_for_human",
+        actor: "system",
+        evidence,
       }),
     (error) =>
       error instanceof CoreInvariantError &&
       error.code === "UNAUTHORIZED_TRANSITION",
   );
-
   assert.throws(() =>
-    transitionExecutionUnit({
+    transitionWorkItem({
       ...common,
-      from: "verifying",
-      to: "verified",
+      workItem,
+      to: "ready_for_human",
       actor: "verifier",
     }),
   );
+  const staleEvidence = passingEvidence(unit);
+  staleEvidence.currentHeadSha = "c".repeat(40);
+  assert.throws(() =>
+    transitionWorkItem({
+      ...common,
+      workItem,
+      to: "ready_for_human",
+      actor: "verifier",
+      evidence: { units: [unit], evidence: [staleEvidence] },
+    }),
+  );
+  assert.equal(
+    transitionWorkItem({
+      ...common,
+      workItem,
+      to: "ready_for_human",
+      actor: "verifier",
+      evidence,
+    }).to,
+    "ready_for_human",
+  );
+});
 
-  const verified = transitionExecutionUnit({
-    ...common,
-    from: "verifying",
-    to: "verified",
-    actor: "verifier",
-    evidence: passingEvidence(),
-  });
-  assert.equal(verified.subject, "execution_unit");
+test("execution-unit readiness requires matching current evidence", () => {
+  const workItem = createTestWorkItem();
+  const unit = createTestUnit(workItem, "verifying");
+  const unrelatedUnit = createTestUnit(workItem, "verifying");
 
   assert.throws(
     () =>
       transitionExecutionUnit({
         ...common,
-        from: "verified",
+        unit,
+        to: "verified",
+        actor: "implementer",
+        evidence: passingEvidence(unit),
+      }),
+    (error) =>
+      error instanceof CoreInvariantError &&
+      error.code === "UNAUTHORIZED_TRANSITION",
+  );
+  assert.throws(() =>
+    transitionExecutionUnit({
+      ...common,
+      unit,
+      to: "verified",
+      actor: "verifier",
+    }),
+  );
+  assert.throws(() =>
+    transitionExecutionUnit({
+      ...common,
+      unit,
+      to: "verified",
+      actor: "verifier",
+      evidence: passingEvidence(unrelatedUnit),
+    }),
+  );
+
+  assert.equal(
+    transitionExecutionUnit({
+      ...common,
+      unit,
+      to: "verified",
+      actor: "verifier",
+      evidence: passingEvidence(unit),
+    }).from,
+    "verifying",
+  );
+});
+
+test("only a verifier can present a verified unit for human review", () => {
+  const workItem = createTestWorkItem();
+  const unit = createTestUnit(workItem, "verified");
+
+  assert.throws(
+    () =>
+      transitionExecutionUnit({
+        ...common,
+        unit,
         to: "ready_for_human",
         actor: "implementer",
-        evidence: passingEvidence(),
+        evidence: passingEvidence(unit),
       }),
     (error) =>
       error instanceof CoreInvariantError &&
@@ -205,20 +284,23 @@ test("execution-unit readiness requires a verifier and current evidence", () => 
   assert.equal(
     transitionExecutionUnit({
       ...common,
-      from: "verified",
+      unit,
       to: "ready_for_human",
       actor: "verifier",
-      evidence: passingEvidence(),
+      evidence: passingEvidence(unit),
     }).to,
     "ready_for_human",
   );
 });
 
 test("only a human can accept verified work", () => {
+  const workItem = createTestWorkItem();
+  const unit = createTestUnit(workItem, "ready_for_human");
+
   assert.throws(() =>
     transitionExecutionUnit({
       ...common,
-      from: "ready_for_human",
+      unit,
       to: "accepted",
       actor: "control_plane",
     }),
@@ -227,7 +309,7 @@ test("only a human can accept verified work", () => {
   assert.equal(
     transitionExecutionUnit({
       ...common,
-      from: "ready_for_human",
+      unit,
       to: "accepted",
       actor: "human",
     }).to,

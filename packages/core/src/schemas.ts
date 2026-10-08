@@ -172,6 +172,7 @@ export const WorkItemSchema = z.looseObject({
   state: WorkItemStateSchema,
   pausedFrom: WorkItemStateSchema.optional(),
   activeRevisionId: RevisionIdSchema.optional(),
+  executionUnitIds: uniqueStringArray(UnitIdSchema).optional(),
   initiatingHost: HostSchema,
   policy: z.record(z.string(), z.unknown()),
 });
@@ -209,6 +210,7 @@ export const ExecutionUnitSchema = z.looseObject({
   schemaVersion: SchemaVersion,
   id: UnitIdSchema,
   workItemId: WorkItemIdSchema,
+  revisionId: RevisionIdSchema,
   taskIds: uniqueStringArray(TaskIdSchema, 1),
   goal: z.string().min(1),
   state: ExecutionUnitStateSchema,

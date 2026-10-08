@@ -4,12 +4,16 @@ import test from "node:test";
 import {
   evaluateBudgets,
   evaluateEvidenceReadiness,
+  evaluateWorkItemReadiness,
   type BudgetResource,
   type BudgetUsage,
-  type EvidenceCategory,
-  type EvidenceVerdict,
 } from "../src/index.js";
-import { createId } from "./helpers.js";
+import {
+  createId,
+  createTestUnit,
+  createTestWorkItem,
+  passingEvidence,
+} from "./helpers.js";
 
 const resources: BudgetResource[] = [
   "tokens",
@@ -18,13 +22,6 @@ const resources: BudgetResource[] = [
   "loopIterations",
   "concurrency",
   "durationMs",
-];
-
-const categories: EvidenceCategory[] = [
-  "repository_checks",
-  "product_behavior",
-  "requirement_coverage",
-  "risk_review",
 ];
 
 test("reaching any hard budget pauses further work", () => {
@@ -86,112 +83,191 @@ test("soft limits warn without blocking", () => {
   assert.equal(result.warnings.length, 1);
 });
 
-function verdict(): EvidenceVerdict {
-  return {
-    schemaVersion: 1,
-    id: createId("verdict"),
-    unitId: createId("unit"),
-    requirementIds: ["R1"],
-    evidenceIds: ["V1"],
-    verifierWorkerId: createId("worker"),
-    headSha: "a".repeat(40),
-    baseSha: "b".repeat(40),
-    categoryResults: categories.map((category) => ({
-      category,
-      status: "passed",
-      receiptIds: [`receipt-${category}`],
-    })),
-    artifactReferences: ["evidence.md"],
-    verdict: "verified",
-    createdAt: "2026-10-08T00:00:00Z",
-  };
+function evidenceFixture(expectedEvidenceIds: `V${number}`[] = ["V1"]) {
+  const workItem = createTestWorkItem();
+  const unit = createTestUnit(workItem, "verifying", expectedEvidenceIds);
+  return { unit, evidence: passingEvidence(unit) };
 }
 
 test("current independent evidence is ready", () => {
-  const evidence = verdict();
-  const result = evaluateEvidenceReadiness({
-    verdict: evidence,
-    currentHeadSha: evidence.headSha,
-    currentBaseSha: evidence.baseSha,
-    implementerWorkerId: createId("worker"),
-  });
+  const { unit, evidence } = evidenceFixture();
 
-  assert.deepEqual(result, { ready: true, reasons: [] });
+  assert.deepEqual(evaluateEvidenceReadiness(unit, evidence), {
+    ready: true,
+    reasons: [],
+  });
 });
 
 test("stale head and base evidence fail independently", () => {
-  const evidence = verdict();
-  const staleHead = evaluateEvidenceReadiness({
-    verdict: evidence,
-    currentHeadSha: "c".repeat(40),
-    currentBaseSha: evidence.baseSha,
-    implementerWorkerId: createId("worker"),
-  });
-  const staleBase = evaluateEvidenceReadiness({
-    verdict: evidence,
-    currentHeadSha: evidence.headSha,
-    currentBaseSha: "d".repeat(40),
-    implementerWorkerId: createId("worker"),
-  });
+  const headFixture = evidenceFixture();
+  headFixture.evidence.currentHeadSha = "c".repeat(40);
+  const baseFixture = evidenceFixture();
+  baseFixture.evidence.currentBaseSha = "d".repeat(40);
 
-  assert.deepEqual(staleHead, { ready: false, reasons: ["STALE_HEAD"] });
-  assert.deepEqual(staleBase, { ready: false, reasons: ["STALE_BASE"] });
+  assert.deepEqual(
+    evaluateEvidenceReadiness(headFixture.unit, headFixture.evidence),
+    { ready: false, reasons: ["STALE_HEAD"] },
+  );
+  assert.deepEqual(
+    evaluateEvidenceReadiness(baseFixture.unit, baseFixture.evidence),
+    { ready: false, reasons: ["STALE_BASE"] },
+  );
 });
 
 test("implementers cannot verify their own evidence", () => {
-  const evidence = verdict();
-  const result = evaluateEvidenceReadiness({
-    verdict: evidence,
-    currentHeadSha: evidence.headSha,
-    currentBaseSha: evidence.baseSha,
-    implementerWorkerId: evidence.verifierWorkerId,
-  });
+  const { unit, evidence } = evidenceFixture();
+  evidence.implementerWorkerId = evidence.verdict.verifierWorkerId;
 
-  assert.deepEqual(result, {
+  assert.deepEqual(evaluateEvidenceReadiness(unit, evidence), {
     ready: false,
     reasons: ["IMPLEMENTER_SELF_VERIFICATION"],
   });
 });
 
 test("invalid head and base SHA values fail independently", () => {
-  const invalidHead = verdict();
-  invalidHead.headSha = "not-a-sha";
-  const invalidBase = verdict();
-  invalidBase.baseSha = "also-not-a-sha";
+  const headFixture = evidenceFixture();
+  headFixture.evidence.verdict.headSha = "not-a-sha";
+  headFixture.evidence.currentHeadSha = "not-a-sha";
+  const baseFixture = evidenceFixture();
+  baseFixture.evidence.verdict.baseSha = "also-not-a-sha";
+  baseFixture.evidence.currentBaseSha = "also-not-a-sha";
 
-  const headResult = evaluateEvidenceReadiness({
-    verdict: invalidHead,
-    currentHeadSha: invalidHead.headSha,
-    currentBaseSha: invalidHead.baseSha,
-    implementerWorkerId: createId("worker"),
-  });
-  const baseResult = evaluateEvidenceReadiness({
-    verdict: invalidBase,
-    currentHeadSha: invalidBase.headSha,
-    currentBaseSha: invalidBase.baseSha,
-    implementerWorkerId: createId("worker"),
-  });
-
-  assert.deepEqual(headResult, { ready: false, reasons: ["INVALID_SHA"] });
-  assert.deepEqual(baseResult, { ready: false, reasons: ["INVALID_SHA"] });
+  assert.deepEqual(
+    evaluateEvidenceReadiness(headFixture.unit, headFixture.evidence),
+    { ready: false, reasons: ["INVALID_SHA"] },
+  );
+  assert.deepEqual(
+    evaluateEvidenceReadiness(baseFixture.unit, baseFixture.evidence),
+    { ready: false, reasons: ["INVALID_SHA"] },
+  );
 });
 
 test("duplicate or incomplete evidence categories are not ready", () => {
-  const evidence = verdict();
-  const firstCategory = evidence.categoryResults[0];
+  const { unit, evidence } = evidenceFixture();
+  const firstCategory = evidence.verdict.categoryResults[0];
   if (!firstCategory) assert.fail("Verdict fixture has no categories");
-  evidence.categoryResults = [firstCategory, firstCategory];
+  evidence.verdict.categoryResults = [firstCategory, firstCategory];
 
-  const result = evaluateEvidenceReadiness({
-    verdict: evidence,
-    currentHeadSha: evidence.headSha,
-    currentBaseSha: evidence.baseSha,
-    implementerWorkerId: createId("worker"),
-  });
+  const result = evaluateEvidenceReadiness(unit, evidence);
 
   assert.equal(result.ready, false);
   assert.deepEqual(
     new Set(result.reasons),
     new Set(["DUPLICATE_CATEGORY", "MISSING_CATEGORY"]),
   );
+});
+
+test("evidence must match the unit and its exact expected evidence IDs", () => {
+  const wrongUnit = evidenceFixture();
+  wrongUnit.evidence.verdict.unitId = createId("unit");
+
+  const missingEvidence = evidenceFixture(["V1", "V2"]);
+  missingEvidence.evidence.verdict.evidenceIds = ["V1"];
+
+  const unexpectedEvidence = evidenceFixture(["V1"]);
+  unexpectedEvidence.evidence.verdict.evidenceIds = ["V1", "V2"];
+
+  const duplicateEvidence = evidenceFixture(["V1"]);
+  duplicateEvidence.evidence.verdict.evidenceIds = ["V1", "V1"];
+
+  assert.deepEqual(
+    evaluateEvidenceReadiness(wrongUnit.unit, wrongUnit.evidence).reasons,
+    ["VERDICT_UNIT_MISMATCH"],
+  );
+  assert.deepEqual(
+    evaluateEvidenceReadiness(missingEvidence.unit, missingEvidence.evidence)
+      .reasons,
+    ["MISSING_EVIDENCE"],
+  );
+  assert.deepEqual(
+    evaluateEvidenceReadiness(
+      unexpectedEvidence.unit,
+      unexpectedEvidence.evidence,
+    ).reasons,
+    ["UNEXPECTED_EVIDENCE"],
+  );
+  assert.deepEqual(
+    evaluateEvidenceReadiness(
+      duplicateEvidence.unit,
+      duplicateEvidence.evidence,
+    ).reasons,
+    ["DUPLICATE_EVIDENCE"],
+  );
+});
+
+test("a work item is ready only when every expected unit has evidence", () => {
+  const workItem = createTestWorkItem();
+  const first = createTestUnit(workItem);
+  const second = createTestUnit(workItem);
+  second.taskIds = ["T2"];
+  second.expectedEvidenceIds = ["V2"];
+
+  const complete = evaluateWorkItemReadiness(workItem, {
+    units: [first, second],
+    evidence: [passingEvidence(first), passingEvidence(second)],
+  });
+  const incomplete = evaluateWorkItemReadiness(workItem, {
+    units: [first, second],
+    evidence: [passingEvidence(first)],
+  });
+
+  assert.deepEqual(complete, { ready: true, reasons: [] });
+  assert.deepEqual(incomplete, {
+    ready: false,
+    reasons: ["MISSING_UNIT_VERDICT"],
+  });
+});
+
+test("work-item readiness requires the exact unit set from the active revision", () => {
+  const workItem = createTestWorkItem();
+  const first = createTestUnit(workItem);
+  const second = createTestUnit(workItem);
+  const extra = { ...first, id: createId("unit") };
+
+  const missing = evaluateWorkItemReadiness(workItem, {
+    units: [first],
+    evidence: [passingEvidence(first)],
+  });
+  const unexpected = evaluateWorkItemReadiness(workItem, {
+    units: [first, second, extra],
+    evidence: [
+      passingEvidence(first),
+      passingEvidence(second),
+      passingEvidence(extra),
+    ],
+  });
+  const duplicate = evaluateWorkItemReadiness(workItem, {
+    units: [first, second, second],
+    evidence: [passingEvidence(first), passingEvidence(second)],
+  });
+
+  assert.deepEqual(missing.reasons, ["MISSING_EXPECTED_UNIT"]);
+  assert.deepEqual(unexpected.reasons, ["UNEXPECTED_EXPECTED_UNIT"]);
+  assert.deepEqual(duplicate.reasons, ["DUPLICATE_EXPECTED_UNIT"]);
+});
+
+test("work-item readiness rejects duplicate, unrelated, and misplaced evidence", () => {
+  const workItem = createTestWorkItem();
+  const first = createTestUnit(workItem);
+  const unrelatedWorkItem = createTestWorkItem();
+  const unrelatedUnit = createTestUnit(unrelatedWorkItem);
+  const firstEvidence = passingEvidence(first);
+
+  const duplicate = evaluateWorkItemReadiness(workItem, {
+    units: [first],
+    evidence: [firstEvidence, firstEvidence],
+  });
+  const unrelated = evaluateWorkItemReadiness(workItem, {
+    units: [first],
+    evidence: [firstEvidence, passingEvidence(unrelatedUnit)],
+  });
+  const misplacedUnit = { ...first, workItemId: unrelatedWorkItem.id };
+  const misplaced = evaluateWorkItemReadiness(workItem, {
+    units: [misplacedUnit],
+    evidence: [passingEvidence(misplacedUnit)],
+  });
+
+  assert.deepEqual(duplicate.reasons, ["DUPLICATE_UNIT_VERDICT"]);
+  assert.deepEqual(unrelated.reasons, ["UNEXPECTED_UNIT_VERDICT"]);
+  assert.deepEqual(misplaced.reasons, ["UNIT_WORK_ITEM_MISMATCH"]);
 });

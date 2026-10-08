@@ -146,6 +146,12 @@ test("JSON Schema projections preserve loose objects and discriminated unions", 
     JSON.stringify(CoreRecordJsonSchemas).includes("transform"),
     false,
   );
+  assert.equal(
+    CoreRecordJsonSchemas.executionUnit.required?.includes("revisionId"),
+    true,
+  );
+  const workItemProperties = CoreRecordJsonSchemas.workItem.properties;
+  assert.ok(workItemProperties && "executionUnitIds" in workItemProperties);
 });
 
 test("runtime and JSON Schema both require unique task IDs", () => {
@@ -153,6 +159,7 @@ test("runtime and JSON Schema both require unique task IDs", () => {
     schemaVersion: 1,
     id: createId("unit"),
     workItemId: createId("workItem"),
+    revisionId: createId("revision"),
     taskIds: ["T1", "T1"],
     goal: "One goal",
     state: "planned",
@@ -216,6 +223,7 @@ test("every core record schema accepts a representative record", () => {
       childWorkItemIds: [],
       state: "approved",
       activeRevisionId: revisionId,
+      executionUnitIds: [unitId],
       initiatingHost: "pi",
       policy: { budget: "default" },
     },
@@ -245,6 +253,7 @@ test("every core record schema accepts a representative record", () => {
       schemaVersion: 1,
       id: unitId,
       workItemId,
+      revisionId,
       taskIds: ["T1"],
       goal: "Deliver one goal",
       state: "planned",

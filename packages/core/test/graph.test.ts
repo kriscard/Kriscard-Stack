@@ -9,6 +9,7 @@ import {
 import { createId } from "./helpers.js";
 
 const workItemId = createId("workItem");
+const revisionId = createId("revision");
 
 function unit(
   taskId: `T${number}`,
@@ -19,6 +20,7 @@ function unit(
     schemaVersion: 1,
     id: createId("unit"),
     workItemId,
+    revisionId,
     taskIds: [taskId],
     goal: `Implement ${taskId}`,
     state: "planned",

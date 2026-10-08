@@ -1,12 +1,16 @@
 import {
   evaluateEvidenceReadiness,
-  type EvidenceReadinessInput,
+  evaluateWorkItemReadiness,
+  type EvidenceContext,
+  type WorkItemEvidence,
 } from "./evidence.js";
 import { CoreInvariantError } from "./errors.js";
 import {
   TimestampSchema,
   type Actor,
+  type ExecutionUnit,
   type ExecutionUnitState,
+  type WorkItem,
   type WorkItemState,
 } from "./schemas.js";
 
@@ -104,7 +108,6 @@ const executionHumanTransitions = new Set([
 ]);
 
 export interface TransitionInput<State extends string> {
-  from: State;
   to: State;
   actor: Actor;
   reason: string;
@@ -115,17 +118,19 @@ export interface TransitionInput<State extends string> {
 export interface TransitionRecord<State extends string>
   extends TransitionInput<State> {
   subject: "work_item" | "execution_unit";
+  from: State;
 }
 
 export interface WorkItemTransitionInput
   extends TransitionInput<WorkItemState> {
-  pausedFrom?: WorkItemState;
-  evidence?: EvidenceReadinessInput;
+  workItem: WorkItem;
+  evidence?: WorkItemEvidence;
 }
 
 export interface ExecutionUnitTransitionInput
   extends TransitionInput<ExecutionUnitState> {
-  evidence?: EvidenceReadinessInput;
+  unit: ExecutionUnit;
+  evidence?: EvidenceContext;
 }
 
 export interface WorkItemTransitionRecord
@@ -133,14 +138,42 @@ export interface WorkItemTransitionRecord
   pausedFrom?: WorkItemState;
 }
 
-function requireCurrentEvidence(
+function requireUnitEvidence(
   transition: string,
-  evidence: EvidenceReadinessInput | undefined,
+  unit: ExecutionUnit,
+  evidence: EvidenceContext | undefined,
 ): void {
-  if (!evidence || !evaluateEvidenceReadiness(evidence).ready) {
+  if (!evidence) {
     throw new CoreInvariantError(
       "INVALID_TRANSITION",
       `${transition} requires current passing evidence`,
+    );
+  }
+  const readiness = evaluateEvidenceReadiness(unit, evidence);
+  if (!readiness.ready) {
+    throw new CoreInvariantError(
+      "INVALID_TRANSITION",
+      `${transition} evidence is not ready: ${readiness.reasons.join(", ")}`,
+    );
+  }
+}
+
+function requireWorkItemEvidence(
+  transition: string,
+  workItem: WorkItem,
+  evidence: WorkItemEvidence | undefined,
+): void {
+  if (!evidence) {
+    throw new CoreInvariantError(
+      "INVALID_TRANSITION",
+      `${transition} requires current passing evidence for every unit`,
+    );
+  }
+  const readiness = evaluateWorkItemReadiness(workItem, evidence);
+  if (!readiness.ready) {
+    throw new CoreInvariantError(
+      "INVALID_TRANSITION",
+      `${transition} work item is not ready: ${readiness.reasons.join(", ")}`,
     );
   }
 }
@@ -173,18 +206,19 @@ export function transitionWorkItem(
   input: WorkItemTransitionInput,
 ): WorkItemTransitionRecord {
   requireReasonAndIdentity(input);
-  if (!workItemTransitions[input.from].includes(input.to)) {
+  const from = input.workItem.state;
+  if (!workItemTransitions[from].includes(input.to)) {
     throw new CoreInvariantError(
       "INVALID_TRANSITION",
-      `Work item cannot move from ${input.from} to ${input.to}`,
+      `Work item cannot move from ${from} to ${input.to}`,
     );
   }
 
-  const key = `${input.from}->${input.to}`;
+  const key = `${from}->${input.to}`;
   if (
-    input.from === "paused" &&
+    from === "paused" &&
     input.to !== "cancelled" &&
-    input.pausedFrom !== input.to
+    input.workItem.pausedFrom !== input.to
   ) {
     throw new CoreInvariantError(
       "INVALID_TRANSITION",
@@ -203,22 +237,23 @@ export function transitionWorkItem(
       "Cancellation requires a human actor",
     );
   }
-  if (key === "verifying->ready_for_human") {
+  if (input.to === "ready_for_human") {
     if (input.actor !== "verifier") {
       throw new CoreInvariantError(
         "UNAUTHORIZED_TRANSITION",
         `${key} requires a verifier actor`,
       );
     }
-    requireCurrentEvidence(key, input.evidence);
+    requireWorkItemEvidence(key, input.workItem, input.evidence);
   }
 
-  const { evidence: _evidence, ...transition } = input;
+  const { evidence: _evidence, workItem: _workItem, ...transition } = input;
   const record: TransitionRecord<WorkItemState> = {
     subject: "work_item",
+    from,
     ...transition,
   };
-  return input.to === "paused" ? { ...record, pausedFrom: input.from } : record;
+  return input.to === "paused" ? { ...record, pausedFrom: from } : record;
 }
 
 /** Applies one guarded execution-unit state transition. */
@@ -226,14 +261,15 @@ export function transitionExecutionUnit(
   input: ExecutionUnitTransitionInput,
 ): TransitionRecord<ExecutionUnitState> {
   requireReasonAndIdentity(input);
-  if (!executionUnitTransitions[input.from].includes(input.to)) {
+  const from = input.unit.state;
+  if (!executionUnitTransitions[from].includes(input.to)) {
     throw new CoreInvariantError(
       "INVALID_TRANSITION",
-      `Execution unit cannot move from ${input.from} to ${input.to}`,
+      `Execution unit cannot move from ${from} to ${input.to}`,
     );
   }
 
-  const key = `${input.from}->${input.to}`;
+  const key = `${from}->${input.to}`;
   if (executionVerifierTransitions.has(key) && input.actor !== "verifier") {
     throw new CoreInvariantError(
       "UNAUTHORIZED_TRANSITION",
@@ -241,7 +277,7 @@ export function transitionExecutionUnit(
     );
   }
   if (executionEvidenceTransitions.has(key)) {
-    requireCurrentEvidence(key, input.evidence);
+    requireUnitEvidence(key, input.unit, input.evidence);
   }
   if (executionHumanTransitions.has(key) && input.actor !== "human") {
     throw new CoreInvariantError(
@@ -256,6 +292,6 @@ export function transitionExecutionUnit(
     );
   }
 
-  const { evidence: _evidence, ...transition } = input;
-  return { subject: "execution_unit", ...transition };
+  const { evidence: _evidence, unit: _unit, ...transition } = input;
+  return { subject: "execution_unit", from, ...transition };
 }

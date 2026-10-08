@@ -4,7 +4,9 @@ import {
   createId as createCoreId,
   type AttemptId,
   type EvidenceCategory,
-  type EvidenceReadinessInput,
+  type EvidenceContext,
+  type ExecutionUnit,
+  type ExecutionUnitState,
   type GateId,
   type IdKind,
   type MachineId,
@@ -13,7 +15,9 @@ import {
   type UnitId,
   type VerdictId,
   type WorkerId,
+  type WorkItem,
   type WorkItemId,
+  type WorkItemState,
 } from "../src/index.js";
 
 export function createId(kind: "project"): ProjectId;
@@ -50,7 +54,56 @@ export function createId(kind: IdKind) {
   }
 }
 
-export function passingEvidence(): EvidenceReadinessInput {
+export function createTestWorkItem(
+  state: WorkItemState = "verifying",
+  pausedFrom?: WorkItemState,
+): WorkItem {
+  const workItem: WorkItem = {
+    schemaVersion: 1,
+    id: createId("workItem"),
+    type: "feature",
+    source: { kind: "test" },
+    projectId: createId("project"),
+    childWorkItemIds: [],
+    state,
+    activeRevisionId: createId("revision"),
+    executionUnitIds: [],
+    initiatingHost: "pi",
+    policy: {},
+  };
+  if (pausedFrom) workItem.pausedFrom = pausedFrom;
+  return workItem;
+}
+
+export function createTestUnit(
+  workItem: WorkItem,
+  state: ExecutionUnitState = "verifying",
+  expectedEvidenceIds: `V${number}`[] = ["V1"],
+): ExecutionUnit {
+  if (!workItem.activeRevisionId) {
+    throw new Error("Test work item requires an active revision");
+  }
+  const unit: ExecutionUnit = {
+    schemaVersion: 1,
+    id: createId("unit"),
+    workItemId: workItem.id,
+    revisionId: workItem.activeRevisionId,
+    taskIds: ["T1"],
+    goal: "Verify one task",
+    state,
+    dependencies: [],
+    conflictKeys: [],
+    expectedChangedAreas: ["packages/core"],
+    pullRequestGroup: "P1",
+    requiredCapabilities: ["git"],
+    expectedEvidenceIds,
+  };
+  workItem.executionUnitIds ??= [];
+  workItem.executionUnitIds.push(unit.id);
+  return unit;
+}
+
+export function passingEvidence(unit: ExecutionUnit): EvidenceContext {
   const currentHeadSha = "a".repeat(40);
   const currentBaseSha = "b".repeat(40);
 
@@ -58,9 +111,9 @@ export function passingEvidence(): EvidenceReadinessInput {
     verdict: {
       schemaVersion: 1,
       id: createId("verdict"),
-      unitId: createId("unit"),
+      unitId: unit.id,
       requirementIds: ["R1"],
-      evidenceIds: ["V1"],
+      evidenceIds: [...unit.expectedEvidenceIds],
       verifierWorkerId: createId("worker"),
       headSha: currentHeadSha,
       baseSha: currentBaseSha,
