@@ -114,7 +114,10 @@ export async function openControlPlane(
           Commands,
           BACKGROUND_CONTEXT,
         );
-        const record = ledger?.commands[key];
+        const record =
+          ledger && Object.hasOwn(ledger.commands, key)
+            ? ledger.commands[key]
+            : undefined;
         return record ? structuredClone(record) : undefined;
       },
       async close(): Promise<void> {

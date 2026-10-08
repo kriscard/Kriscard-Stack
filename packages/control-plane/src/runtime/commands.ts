@@ -350,7 +350,9 @@ export async function submitCommand(
   const root = await harness.root(context);
   const taskId = await root.commit(async (tx) => {
     const ledger = await tx.doc(Commands);
-    const existing = ledger.commands[input.key];
+    const existing = Object.hasOwn(ledger.commands, input.key)
+      ? ledger.commands[input.key]
+      : undefined;
     if (existing) {
       if (
         existing.operation !== input.operation ||

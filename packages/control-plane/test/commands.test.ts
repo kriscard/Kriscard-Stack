@@ -92,6 +92,55 @@ test("a reserved idempotency key produces one durable receipt, even after reopen
   await recovered.close();
 });
 
+test("idempotency keys matching inherited object names remain distinct reservations", async (t) => {
+  const root = await tempRoot();
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const adapter = {
+    classify: () => "idempotent_with_key" as const,
+    async execute(input: { key: string }) {
+      return `receipt-${input.key}`;
+    },
+  };
+  const keys = ["constructor", "toString", "__proto__"];
+  const runtime = await openControlPlane(root, BACKGROUND_CONTEXT, adapter);
+  const ids = new Map<string, number>();
+  try {
+    await runtime.submit({ key: "ordinary", operation: "probe" });
+    await runtime.harness.waitForIdle(BACKGROUND_CONTEXT);
+    for (const key of keys) assert.equal(await runtime.command(key), undefined);
+    for (const key of keys) {
+      const input = { key, operation: "probe" };
+      const id = await runtime.submit(input);
+      ids.set(key, id);
+      assert.equal(await runtime.submit(input), id);
+    }
+    await runtime.harness.waitForIdle(BACKGROUND_CONTEXT);
+    for (const key of keys) {
+      assert.equal(
+        (await runtime.command(key))?.receipt?.reference,
+        `receipt-${key}`,
+      );
+    }
+  } finally {
+    await runtime.close();
+  }
+  const reopened = await openControlPlane(root, BACKGROUND_CONTEXT, adapter);
+  try {
+    for (const key of keys) {
+      assert.equal(
+        await reopened.submit({ key, operation: "probe" }),
+        ids.get(key),
+      );
+      assert.equal(
+        (await reopened.command(key))?.receipt?.reference,
+        `receipt-${key}`,
+      );
+    }
+  } finally {
+    await reopened.close();
+  }
+});
+
 test("command reads cannot mutate the authoritative live state", async (t) => {
   const root = await tempRoot();
   t.onTestFinished(() => rm(root, { recursive: true, force: true }));
