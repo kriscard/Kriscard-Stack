@@ -1,0 +1,25 @@
+{
+  "name": "@kriscard/control-plane",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./artifacts": {
+      "types": "./dist/artifacts/index.d.ts",
+      "import": "./dist/artifacts/index.js"
+    }
+  },
+  "scripts": {
+    "build": "pnpm --filter @kriscard/core build && tsc -p tsconfig.json",
+    "test": "pnpm --filter @kriscard/core build && rm -rf .test-dist && tsc -p tsconfig.test.json && node --test .test-dist/test/*.test.js",
+    "typecheck": "pnpm --filter @kriscard/core build && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@kriscard/core": "workspace:*",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "typescript": "5.9.3"
+  }
+}

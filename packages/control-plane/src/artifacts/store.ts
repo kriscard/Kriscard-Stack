@@ -1,0 +1,709 @@
+import { lstat, readdir, rename, rm } from "node:fs/promises";
+import path from "node:path";
+
+import {
+  EvidenceVerdictSchema,
+  RevisionIdSchema,
+  VerdictIdSchema,
+  WorkItemIdSchema,
+  type EvidenceVerdict,
+  type RevisionId,
+  type VerdictId,
+  type WorkItemId,
+} from "@kriscard/core";
+
+import { parseApprovedHashes } from "./approval.js";
+import { ArtifactStoreError } from "./errors.js";
+import {
+  hashFile,
+  readParsedJson,
+  sha256,
+  writePrivateFileAtomic,
+  writePrivateJson,
+} from "./files.js";
+import {
+  assertSafeRelativePath,
+  assertSafeSourceFile,
+  defaultArtifactRoot,
+  ensurePrivateDirectory,
+  readFileWithoutFollowingSymlinks,
+  resolveWithin,
+} from "./paths.js";
+import {
+  ArtifactBundleManifestSchema,
+  ArtifactContextSchema,
+  MigrationJournalSchema,
+  type ArtifactBundleManifest,
+  type ArtifactContext,
+  type EvidenceBundleManifest,
+  type MigrationJournal,
+  type MigrationSource,
+  type RevisionBundleManifest,
+  type StoredFile,
+} from "./schemas.js";
+
+export type MigrationPhase = "file_copied" | "before_commit" | "committed";
+
+export interface MigrationCheckpoint {
+  migrationId: string;
+  phase: MigrationPhase;
+  storedPath?: string;
+}
+
+export interface ArtifactStoreOptions {
+  root?: string;
+  onCheckpoint?: (checkpoint: MigrationCheckpoint) => void | Promise<void>;
+}
+
+interface ImportOptions {
+  migrationId?: string;
+  createdAt?: string;
+}
+
+export interface RevisionImportRequest extends ImportOptions {
+  context: ArtifactContext;
+  revisionId: RevisionId;
+  sourceDirectory: string;
+  supportingFiles?: readonly string[];
+}
+
+export interface EvidenceImportRequest extends ImportOptions {
+  context: ArtifactContext;
+  verdict: EvidenceVerdict;
+  sourceDirectory: string;
+  files: readonly string[];
+}
+
+export type ArtifactReference =
+  | {
+      kind: "revision";
+      repositoryFingerprint: string;
+      workItemId: WorkItemId;
+      revisionId: RevisionId;
+    }
+  | {
+      kind: "evidence";
+      repositoryFingerprint: string;
+      workItemId: WorkItemId;
+      verdictId: VerdictId;
+    };
+
+export interface StoredBundle {
+  directory: string;
+  manifest: ArtifactBundleManifest;
+  migrationId: string;
+}
+
+interface PreparedBundle {
+  sourceDirectory: string;
+  destinationRelative: string;
+  manifest: ArtifactBundleManifest;
+  sources: MigrationSource[];
+}
+
+/** Stores immutable approved revisions and evidence outside application repositories. */
+export class ArtifactStore {
+  readonly root: string;
+  readonly onCheckpoint:
+    | ((checkpoint: MigrationCheckpoint) => void | Promise<void>)
+    | undefined;
+
+  constructor(options: ArtifactStoreOptions = {}) {
+    this.root = path.resolve(options.root ?? defaultArtifactRoot());
+    this.onCheckpoint = options.onCheckpoint;
+  }
+
+  async initialize(): Promise<void> {
+    await ensurePrivateDirectory(this.root);
+    await ensurePrivateDirectory(this.root, ".migrations");
+    await ensurePrivateDirectory(this.root, ".staging");
+    await ensurePrivateDirectory(this.root, "repositories");
+  }
+
+  /** Imports one approved spec/plan/approval revision as an immutable bundle. */
+  async importApprovedRevision(
+    request: RevisionImportRequest,
+  ): Promise<StoredBundle> {
+    await this.initialize();
+    const context = ArtifactContextSchema.parse(request.context);
+    const revisionId = RevisionIdSchema.parse(request.revisionId);
+    const sources: MigrationSource[] = [
+      { sourcePath: "spec.md", storedPath: "spec.md" },
+      { sourcePath: "plan.md", storedPath: "plan.md" },
+      { sourcePath: "approval.md", storedPath: "approval.md" },
+      ...(request.supportingFiles ?? []).map((sourcePath) => ({
+        sourcePath,
+        storedPath: `supporting/${sourcePath}`,
+      })),
+    ];
+    const sourceDirectory = path.resolve(request.sourceDirectory);
+    const files = await this.inspectSources(sourceDirectory, sources);
+    const approvalPath = await assertSafeSourceFile(
+      sourceDirectory,
+      "approval.md",
+    );
+    const approvalContent =
+      await readFileWithoutFollowingSymlinks(approvalPath);
+    const approved = parseApprovedHashes(approvalContent.toString("utf8"));
+    const spec = files.find((file) => file.path === "spec.md");
+    const plan = files.find((file) => file.path === "plan.md");
+    const approval = files.find((file) => file.path === "approval.md");
+    if (!spec || !plan || !approval) {
+      throw new ArtifactStoreError(
+        "INVALID_ARTIFACT",
+        "Approved revision requires spec.md, plan.md, and approval.md",
+      );
+    }
+    if (approved.spec !== spec.sha256 || approved.plan !== plan.sha256) {
+      throw new ArtifactStoreError(
+        "HASH_MISMATCH",
+        "Approval hashes do not match spec.md and plan.md",
+      );
+    }
+
+    const manifest: RevisionBundleManifest = {
+      schemaVersion: 1,
+      kind: "revision",
+      revisionId,
+      context,
+      createdAt: request.createdAt ?? new Date().toISOString(),
+      approvedHashes: {
+        spec: approved.spec,
+        plan: approved.plan,
+        approval: approval.sha256,
+      },
+      files,
+    };
+    const prepared: PreparedBundle = {
+      sourceDirectory,
+      destinationRelative: this.destinationRelative(manifest),
+      manifest: ArtifactBundleManifestSchema.parse(manifest),
+      sources,
+    };
+    return this.commitPrepared(
+      prepared,
+      request.migrationId ?? this.defaultMigrationId(prepared),
+    );
+  }
+
+  /** Imports final verifier evidence and its readable artifacts immutably. */
+  async importEvidence(request: EvidenceImportRequest): Promise<StoredBundle> {
+    await this.initialize();
+    const context = ArtifactContextSchema.parse(request.context);
+    const verdict = EvidenceVerdictSchema.parse(request.verdict);
+    if (request.files.length === 0) {
+      throw new ArtifactStoreError(
+        "INVALID_ARTIFACT",
+        "Evidence import requires at least one readable artifact",
+      );
+    }
+    const sources = request.files.map((sourcePath) => ({
+      sourcePath,
+      storedPath: sourcePath,
+    }));
+    const sourceDirectory = path.resolve(request.sourceDirectory);
+    const files = await this.inspectSources(sourceDirectory, sources);
+    const manifest: EvidenceBundleManifest = {
+      schemaVersion: 1,
+      kind: "evidence",
+      verdictId: verdict.id,
+      verdict,
+      context,
+      createdAt: request.createdAt ?? new Date().toISOString(),
+      files,
+    };
+    const prepared: PreparedBundle = {
+      sourceDirectory,
+      destinationRelative: this.destinationRelative(manifest),
+      manifest: ArtifactBundleManifestSchema.parse(manifest),
+      sources,
+    };
+    return this.commitPrepared(
+      prepared,
+      request.migrationId ?? this.defaultMigrationId(prepared),
+    );
+  }
+
+  /** Resumes an interrupted import from its durable migration journal. */
+  async resumeMigration(migrationId: string): Promise<StoredBundle> {
+    await this.initialize();
+    const journal = await this.readJournal(migrationId);
+    return this.continueJournal(journal);
+  }
+
+  /** Recomputes every hash and permission check for one stored bundle. */
+  async verify(reference: ArtifactReference): Promise<ArtifactBundleManifest> {
+    await this.initialize();
+    return this.verifyBundleAt(this.bundleDirectory(reference));
+  }
+
+  /** Exports a self-contained readable bundle without weakening permissions. */
+  async export(
+    reference: ArtifactReference,
+    destinationDirectory: string,
+  ): Promise<string> {
+    const sourceDirectory = this.bundleDirectory(reference);
+    const manifest = await this.verifyBundleAt(sourceDirectory);
+    if (await pathExists(destinationDirectory)) {
+      throw new ArtifactStoreError(
+        "IMMUTABLE_CONFLICT",
+        `Export destination already exists: ${destinationDirectory}`,
+      );
+    }
+    await ensurePrivateDirectory(destinationDirectory);
+    for (const file of manifest.files) {
+      const source = await assertSafeSourceFile(sourceDirectory, file.path);
+      const destination = resolveWithin(destinationDirectory, file.path);
+      await ensurePrivateDirectoryForFile(destinationDirectory, file.path);
+      await writePrivateFileAtomic(
+        destination,
+        await readFileWithoutFollowingSymlinks(source),
+      );
+    }
+    await writePrivateJson(
+      path.join(destinationDirectory, "manifest.json"),
+      manifest,
+    );
+    await this.verifyBundleAt(destinationDirectory, manifest);
+    return path.resolve(destinationDirectory);
+  }
+
+  /** Restores an exported bundle to its canonical immutable location. */
+  async restore(exportDirectory: string): Promise<StoredBundle> {
+    await this.initialize();
+    const sourceDirectory = path.resolve(exportDirectory);
+    const manifest = await this.verifyBundleAt(sourceDirectory);
+    const prepared: PreparedBundle = {
+      sourceDirectory,
+      destinationRelative: this.destinationRelative(manifest),
+      manifest,
+      sources: manifest.files.map((file) => ({
+        sourcePath: file.path,
+        storedPath: file.path,
+      })),
+    };
+    return this.commitPrepared(
+      prepared,
+      `restore-${sha256(Buffer.from(prepared.destinationRelative)).slice(0, 24)}`,
+    );
+  }
+
+  private async inspectSources(
+    sourceDirectory: string,
+    sources: readonly MigrationSource[],
+  ): Promise<StoredFile[]> {
+    const storedPaths = new Set<string>();
+    const files: StoredFile[] = [];
+    for (const source of sources) {
+      assertSafeRelativePath(source.sourcePath);
+      assertSafeRelativePath(source.storedPath);
+      if (source.storedPath === "manifest.json") {
+        throw new ArtifactStoreError(
+          "INVALID_PATH",
+          "manifest.json is reserved by the artifact store",
+        );
+      }
+      if (storedPaths.has(source.storedPath)) {
+        throw new ArtifactStoreError(
+          "INVALID_ARTIFACT",
+          `Duplicate stored artifact path: ${source.storedPath}`,
+        );
+      }
+      storedPaths.add(source.storedPath);
+      const sourcePath = await assertSafeSourceFile(
+        sourceDirectory,
+        source.sourcePath,
+      );
+      const hash = await hashFile(sourcePath);
+      files.push({ path: source.storedPath, ...hash });
+    }
+    return files.sort((left, right) => left.path.localeCompare(right.path));
+  }
+
+  private async commitPrepared(
+    prepared: PreparedBundle,
+    migrationId: string,
+  ): Promise<StoredBundle> {
+    assertMigrationId(migrationId);
+    const existingJournal = await this.tryReadJournal(migrationId);
+    if (existingJournal) {
+      if (!journalsMatchPrepared(existingJournal, prepared)) {
+        throw new ArtifactStoreError(
+          "MIGRATION_CONFLICT",
+          `Migration ID is already bound to different artifacts: ${migrationId}`,
+        );
+      }
+      return this.continueJournal(existingJournal);
+    }
+
+    const journal: MigrationJournal = {
+      schemaVersion: 1,
+      migrationId,
+      status: "copying",
+      sourceDirectory: prepared.sourceDirectory,
+      destinationRelative: prepared.destinationRelative,
+      manifest: prepared.manifest,
+      sources: prepared.sources,
+      completedFiles: [],
+      updatedAt: new Date().toISOString(),
+    };
+    await this.writeJournal(journal);
+    return this.continueJournal(journal);
+  }
+
+  private async continueJournal(
+    initialJournal: MigrationJournal,
+  ): Promise<StoredBundle> {
+    let journal = initialJournal;
+    const destination = resolveWithin(this.root, journal.destinationRelative);
+    if (journal.status === "committed") {
+      const manifest = await this.verifyBundleAt(destination, journal.manifest);
+      return {
+        directory: destination,
+        manifest,
+        migrationId: journal.migrationId,
+      };
+    }
+
+    if (await pathExists(destination)) {
+      const manifest = await this.verifyBundleAt(destination, journal.manifest);
+      journal = await this.markCommitted(journal);
+      return {
+        directory: destination,
+        manifest,
+        migrationId: journal.migrationId,
+      };
+    }
+
+    const stagingRelative = `.staging/${journal.migrationId}`;
+    const staging = await ensurePrivateDirectory(this.root, stagingRelative);
+    const completed = new Set(journal.completedFiles);
+
+    for (const source of journal.sources) {
+      const expected = journal.manifest.files.find(
+        (file) => file.path === source.storedPath,
+      );
+      if (!expected) {
+        throw new ArtifactStoreError(
+          "MIGRATION_CONFLICT",
+          `Migration source is absent from its manifest: ${source.storedPath}`,
+        );
+      }
+      const stagedPath = resolveWithin(staging, source.storedPath);
+      await ensurePrivateDirectoryForFile(staging, source.storedPath);
+      if (await pathExists(stagedPath)) {
+        assertExpectedHash(
+          await hashFile(stagedPath),
+          expected,
+          source.storedPath,
+        );
+      } else {
+        const sourcePath = await assertSafeSourceFile(
+          journal.sourceDirectory,
+          source.sourcePath,
+        );
+        const sourceHash = await hashFile(sourcePath);
+        assertExpectedHash(sourceHash, expected, source.sourcePath);
+        await writePrivateFileAtomic(
+          stagedPath,
+          await readFileWithoutFollowingSymlinks(sourcePath),
+        );
+        await this.checkpoint({
+          migrationId: journal.migrationId,
+          phase: "file_copied",
+          storedPath: source.storedPath,
+        });
+      }
+
+      if (!completed.has(source.storedPath)) {
+        completed.add(source.storedPath);
+        journal = {
+          ...journal,
+          completedFiles: [...completed],
+          updatedAt: new Date().toISOString(),
+        };
+        await this.writeJournal(journal);
+      }
+    }
+
+    await writePrivateJson(
+      path.join(staging, "manifest.json"),
+      journal.manifest,
+    );
+    await this.verifyBundleAt(staging, journal.manifest);
+    await this.checkpoint({
+      migrationId: journal.migrationId,
+      phase: "before_commit",
+    });
+
+    await ensurePrivateDirectoryForRelativeDirectory(
+      this.root,
+      journal.destinationRelative,
+    );
+    try {
+      await rename(staging, destination);
+    } catch (error) {
+      if (!(await pathExists(destination))) throw error;
+      await this.verifyBundleAt(destination, journal.manifest);
+      await rm(staging, { recursive: true, force: true });
+    }
+
+    journal = await this.markCommitted(journal);
+    await this.checkpoint({
+      migrationId: journal.migrationId,
+      phase: "committed",
+    });
+    const manifest = await this.verifyBundleAt(destination, journal.manifest);
+    return {
+      directory: destination,
+      manifest,
+      migrationId: journal.migrationId,
+    };
+  }
+
+  private async verifyBundleAt(
+    directory: string,
+    expected?: ArtifactBundleManifest,
+  ): Promise<ArtifactBundleManifest> {
+    const manifestPath = await assertSafeSourceFile(directory, "manifest.json");
+    const manifest = await readParsedJson(
+      manifestPath,
+      ArtifactBundleManifestSchema,
+    );
+    if (expected && JSON.stringify(manifest) !== JSON.stringify(expected)) {
+      throw new ArtifactStoreError(
+        "IMMUTABLE_CONFLICT",
+        `Stored manifest differs from the approved bundle: ${directory}`,
+      );
+    }
+
+    const expectedPaths = new Set(["manifest.json"]);
+    for (const file of manifest.files) {
+      const safePath = assertSafeRelativePath(file.path);
+      if (expectedPaths.has(safePath)) {
+        throw new ArtifactStoreError(
+          "INVALID_ARTIFACT",
+          `Duplicate manifest file path: ${file.path}`,
+        );
+      }
+      expectedPaths.add(safePath);
+      const filePath = await assertSafeSourceFile(directory, file.path);
+      assertExpectedHash(await hashFile(filePath), file, file.path);
+    }
+
+    const actualPaths = await listPrivateBundleFiles(directory);
+    if (
+      actualPaths.size !== expectedPaths.size ||
+      [...expectedPaths].some((file) => !actualPaths.has(file))
+    ) {
+      throw new ArtifactStoreError(
+        "INVALID_ARTIFACT",
+        `Bundle contains missing or untracked files: ${directory}`,
+      );
+    }
+    return manifest;
+  }
+
+  private bundleDirectory(reference: ArtifactReference): string {
+    const context = {
+      repositoryFingerprint: reference.repositoryFingerprint,
+      workItemId: WorkItemIdSchema.parse(reference.workItemId),
+    };
+    const repositoryKey = repositoryStorageKey(context.repositoryFingerprint);
+    const leaf =
+      reference.kind === "revision"
+        ? `revisions/${RevisionIdSchema.parse(reference.revisionId)}`
+        : `evidence/${VerdictIdSchema.parse(reference.verdictId)}`;
+    return resolveWithin(
+      this.root,
+      `repositories/${repositoryKey}/work-items/${context.workItemId}/${leaf}`,
+    );
+  }
+
+  private destinationRelative(manifest: ArtifactBundleManifest): string {
+    const repositoryKey = repositoryStorageKey(
+      manifest.context.repositoryFingerprint,
+    );
+    const leaf =
+      manifest.kind === "revision"
+        ? `revisions/${manifest.revisionId}`
+        : `evidence/${manifest.verdictId}`;
+    return `repositories/${repositoryKey}/work-items/${manifest.context.workItemId}/${leaf}`;
+  }
+
+  private defaultMigrationId(prepared: PreparedBundle): string {
+    return `import-${sha256(Buffer.from(prepared.destinationRelative)).slice(0, 24)}`;
+  }
+
+  private journalPath(migrationId: string): string {
+    assertMigrationId(migrationId);
+    return resolveWithin(this.root, `.migrations/${migrationId}.json`);
+  }
+
+  private async tryReadJournal(
+    migrationId: string,
+  ): Promise<MigrationJournal | undefined> {
+    const journalPath = this.journalPath(migrationId);
+    if (!(await pathExists(journalPath))) return undefined;
+    return readParsedJson(journalPath, MigrationJournalSchema);
+  }
+
+  private async readJournal(migrationId: string): Promise<MigrationJournal> {
+    const journal = await this.tryReadJournal(migrationId);
+    if (!journal) {
+      throw new ArtifactStoreError(
+        "MIGRATION_CONFLICT",
+        `Unknown migration: ${migrationId}`,
+      );
+    }
+    return journal;
+  }
+
+  private async writeJournal(journal: MigrationJournal): Promise<void> {
+    await writePrivateJson(this.journalPath(journal.migrationId), journal);
+  }
+
+  private async markCommitted(
+    journal: MigrationJournal,
+  ): Promise<MigrationJournal> {
+    const committed: MigrationJournal = {
+      ...journal,
+      status: "committed",
+      updatedAt: new Date().toISOString(),
+    };
+    await this.writeJournal(committed);
+    return committed;
+  }
+
+  private async checkpoint(checkpoint: MigrationCheckpoint): Promise<void> {
+    await this.onCheckpoint?.(checkpoint);
+  }
+}
+
+function repositoryStorageKey(repositoryFingerprint: string): string {
+  return sha256(Buffer.from(repositoryFingerprint)).slice(0, 32);
+}
+
+function assertMigrationId(migrationId: string): void {
+  if (!/^[a-z0-9][a-z0-9-]{0,127}$/.test(migrationId)) {
+    throw new ArtifactStoreError(
+      "INVALID_PATH",
+      `Invalid migration ID: ${migrationId}`,
+    );
+  }
+}
+
+function assertExpectedHash(
+  actual: { sha256: string; size: number },
+  expected: StoredFile,
+  fileName: string,
+): void {
+  if (actual.sha256 !== expected.sha256 || actual.size !== expected.size) {
+    throw new ArtifactStoreError(
+      "HASH_MISMATCH",
+      `Artifact hash or size changed: ${fileName}`,
+    );
+  }
+}
+
+function journalsMatchPrepared(
+  journal: MigrationJournal,
+  prepared: PreparedBundle,
+): boolean {
+  return (
+    journal.sourceDirectory === prepared.sourceDirectory &&
+    journal.destinationRelative === prepared.destinationRelative &&
+    comparableManifest(journal.manifest) ===
+      comparableManifest(prepared.manifest) &&
+    JSON.stringify(journal.sources) === JSON.stringify(prepared.sources)
+  );
+}
+
+async function ensurePrivateDirectoryForFile(
+  root: string,
+  relativeFile: string,
+): Promise<void> {
+  const parent = path.posix.dirname(relativeFile);
+  if (parent === ".") return;
+  await ensurePrivateDirectory(root, parent);
+}
+
+async function ensurePrivateDirectoryForRelativeDirectory(
+  root: string,
+  relativeDirectory: string,
+): Promise<void> {
+  const parent = path.posix.dirname(relativeDirectory);
+  if (parent === ".") return;
+  await ensurePrivateDirectory(root, parent);
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await lstat(filePath);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function comparableManifest(manifest: ArtifactBundleManifest): string {
+  return JSON.stringify({ ...manifest, createdAt: "" });
+}
+
+async function listPrivateBundleFiles(root: string): Promise<Set<string>> {
+  const rootInfo = await lstat(root);
+  if (rootInfo.isSymbolicLink()) {
+    throw new ArtifactStoreError(
+      "SYMLINK_ESCAPE",
+      `Bundle root is a symbolic link: ${root}`,
+    );
+  }
+  if (!rootInfo.isDirectory() || (rootInfo.mode & 0o077) !== 0) {
+    throw new ArtifactStoreError(
+      "INVALID_ARTIFACT",
+      `Bundle root permissions are not user-only: ${root}`,
+    );
+  }
+  const files = new Set<string>();
+  const pending: Array<{ directory: string; relative: string }> = [
+    { directory: root, relative: "" },
+  ];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current) break;
+    const entries = await readdir(current.directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const relative = current.relative
+        ? `${current.relative}/${entry.name}`
+        : entry.name;
+      const absolute = path.join(current.directory, entry.name);
+      const info = await lstat(absolute);
+      if (info.isSymbolicLink()) {
+        throw new ArtifactStoreError(
+          "SYMLINK_ESCAPE",
+          `Bundle contains a symbolic link: ${absolute}`,
+        );
+      }
+      if ((info.mode & 0o077) !== 0) {
+        throw new ArtifactStoreError(
+          "INVALID_ARTIFACT",
+          `Bundle permissions are not user-only: ${absolute}`,
+        );
+      }
+      if (info.isDirectory()) {
+        pending.push({ directory: absolute, relative });
+      } else if (info.isFile()) {
+        files.add(relative);
+      } else {
+        throw new ArtifactStoreError(
+          "INVALID_ARTIFACT",
+          `Bundle contains an unsupported entry: ${absolute}`,
+        );
+      }
+    }
+  }
+  return files;
+}
