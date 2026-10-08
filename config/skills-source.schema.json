@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kriscard/Kriscard-Stack/config/skills-source.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repository", "installSource", "revision"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "repository": {
+      "const": "https://github.com/kriscard/Skills.git"
+    },
+    "installSource": { "const": "kriscard/Skills" },
+    "revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    }
+  }
+}

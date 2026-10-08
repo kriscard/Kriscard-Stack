@@ -1,0 +1,26 @@
+{
+  "name": "kriscard-stack",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Personal AI engineering workflows with durable execution and independent verification.",
+  "type": "module",
+  "packageManager": "pnpm@10.34.4",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=10"
+  },
+  "scripts": {
+    "validate": "node scripts/validate-workspace.mjs && node scripts/validate-skill-catalog.mjs",
+    "validate:catalogs": "node scripts/validate-skill-catalog.mjs",
+    "test": "node --test",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "pnpm run validate && pnpm test && pnpm run typecheck && pnpm run format:check"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "prettier": "3.6.2",
+    "typescript": "5.9.3"
+  }
+}

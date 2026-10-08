@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check out compatible general skills
+        run: |
+          revision="$(node -p "JSON.parse(require('fs').readFileSync('config/skills-source.json', 'utf8')).revision")"
+          git clone --filter=blob:none https://github.com/kriscard/Skills.git ../Skills
+          git -C ../Skills checkout "$revision"
+
+      - name: Validate
+        env:
+          KRISCARD_SKILLS_REPO: ../Skills
+        run: pnpm run check
