@@ -66,6 +66,37 @@ test("the only owner persists SQLite state and releases ownership on close", asy
   await recovered.close();
 });
 
+test("submission validation rejects through the returned promise", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "kriscard-runtime-"));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const withoutAdapter = await openControlPlane(root);
+  try {
+    const submission = withoutAdapter.submit({
+      key: "missing",
+      operation: "probe",
+    });
+    await assert.rejects(submission, /No command adapter is configured/);
+  } finally {
+    await withoutAdapter.close();
+  }
+
+  const withAdapter = await openControlPlane(root, BACKGROUND_CONTEXT, {
+    classify: () => undefined,
+    async execute() {
+      return "unreachable";
+    },
+  });
+  try {
+    const submission = withAdapter.submit({
+      key: "unsupported",
+      operation: "probe",
+    });
+    await assert.rejects(submission, /Unsupported command operation/);
+  } finally {
+    await withAdapter.close();
+  }
+});
+
 test("existing shared SQLite files and symlinked databases are rejected", async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "kriscard-runtime-"));
   t.onTestFinished(() => rm(root, { recursive: true, force: true }));

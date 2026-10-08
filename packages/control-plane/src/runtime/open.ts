@@ -96,7 +96,7 @@ export async function openControlPlane(
     let closed = false;
 
     return {
-      submit(input): Promise<number> {
+      async submit(input): Promise<number> {
         if (!commandTask || !commandAdapter)
           throw new Error("No command adapter is configured");
         const replayClass = commandAdapter.classify(input.operation);
