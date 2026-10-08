@@ -342,32 +342,12 @@ export class ArtifactStore {
     sourceDirectory: string,
     sources: readonly MigrationSource[],
   ): Promise<StoredFile[]> {
-    const storedPaths = new Set<string>();
+    const storedPaths = new Set<string>([portablePathKey("manifest.json")]);
     const sourcePaths = new Set<string>();
     const files: StoredFile[] = [];
     for (const source of sources) {
-      const sourceKey = portablePathKey(source.sourcePath);
-      if (sourcePaths.has(sourceKey)) {
-        throw new ArtifactStoreError(
-          "INVALID_ARTIFACT",
-          `Duplicate source artifact path: ${source.sourcePath}`,
-        );
-      }
-      sourcePaths.add(sourceKey);
-      const storedKey = portablePathKey(source.storedPath);
-      if (storedKey === portablePathKey("manifest.json")) {
-        throw new ArtifactStoreError(
-          "INVALID_PATH",
-          "manifest.json is reserved by the artifact store",
-        );
-      }
-      if (storedPaths.has(storedKey)) {
-        throw new ArtifactStoreError(
-          "INVALID_ARTIFACT",
-          `Duplicate stored artifact path: ${source.storedPath}`,
-        );
-      }
-      storedPaths.add(storedKey);
+      registerPortablePath(sourcePaths, source.sourcePath, "source artifact");
+      registerPortablePath(storedPaths, source.storedPath, "stored artifact");
       const sourcePath = await assertSafeSourceFile(
         sourceDirectory,
         source.sourcePath,
@@ -665,14 +645,7 @@ export class ArtifactStore {
 
     const expectedPaths = new Set([portablePathKey("manifest.json")]);
     for (const file of manifest.files) {
-      const pathKey = portablePathKey(file.path);
-      if (expectedPaths.has(pathKey)) {
-        throw new ArtifactStoreError(
-          "INVALID_ARTIFACT",
-          `Duplicate manifest file path: ${file.path}`,
-        );
-      }
-      expectedPaths.add(pathKey);
+      registerPortablePath(expectedPaths, file.path, "manifest artifact");
       const filePath = await assertSafeSourceFile(directory, file.path);
       assertExpectedHash(await hashFile(filePath), file, file.path);
     }
@@ -680,11 +653,11 @@ export class ArtifactStore {
     await this.validateBundleSemantics(directory, manifest);
 
     const actualPaths = await listPrivateBundleFiles(directory);
-    const actualPathKeys = new Set(
-      [...actualPaths].map((file) => portablePathKey(file)),
-    );
+    const actualPathKeys = new Set<string>();
+    for (const actualPath of actualPaths) {
+      registerPortablePath(actualPathKeys, actualPath, "stored bundle entry");
+    }
     if (
-      actualPathKeys.size !== actualPaths.size ||
       actualPathKeys.size !== expectedPaths.size ||
       [...expectedPaths].some((file) => !actualPathKeys.has(file))
     ) {
@@ -823,6 +796,28 @@ export class ArtifactStore {
   private async checkpoint(checkpoint: MigrationCheckpoint): Promise<void> {
     await this.onCheckpoint?.(checkpoint);
   }
+}
+
+function registerPortablePath(
+  paths: Set<string>,
+  relativePath: string,
+  description: string,
+): string {
+  const key = portablePathKey(relativePath);
+  for (const existing of paths) {
+    if (
+      key === existing ||
+      key.startsWith(`${existing}/`) ||
+      existing.startsWith(`${key}/`)
+    ) {
+      throw new ArtifactStoreError(
+        "INVALID_ARTIFACT",
+        `${description} collides with another portable path: ${relativePath}`,
+      );
+    }
+  }
+  paths.add(key);
+  return key;
 }
 
 function pathsOverlap(leftPath: string, rightPath: string): boolean {

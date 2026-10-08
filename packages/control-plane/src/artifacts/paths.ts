@@ -60,7 +60,7 @@ export function assertSafeRelativePath(relativePath: string): string {
         segment === "" ||
         segment === "." ||
         segment === ".." ||
-        /[<>:"|?*\u0000-\u001f]/.test(segment) ||
+        !/^[A-Za-z0-9._-]+$/.test(segment) ||
         /[. ]$/.test(segment) ||
         /^\..+\.kriscard-tmp$/i.test(segment) ||
         /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(baseName)
@@ -76,7 +76,7 @@ export function assertSafeRelativePath(relativePath: string): string {
 }
 
 export function portablePathKey(relativePath: string): string {
-  return assertSafeRelativePath(relativePath).toLowerCase();
+  return assertSafeRelativePath(relativePath).normalize("NFKC").toLowerCase();
 }
 
 export function resolveWithin(root: string, relativePath: string): string {

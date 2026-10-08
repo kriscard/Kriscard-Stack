@@ -120,9 +120,44 @@ test("uses a host-neutral portable artifact path grammar", () => {
     "folder/.evidence.md.kriscard-tmp",
     "CON.md",
     "folder/lpt1.txt",
+    "COM¹.txt",
+    "LPT².log",
+    "résumé.md",
   ]) {
     assert.throws(() => assertSafeRelativePath(unsafe), /Artifact path/);
   }
+});
+
+test("rejects portable file-directory and reserved-manifest collisions", async (t) => {
+  const temporary = await temporaryTestRoot(t);
+  const source = path.join(temporary, "collision-source");
+  await mkdir(source);
+  await writeFile(path.join(source, "report"), "report\n");
+  const context = createContext();
+  const verdict = createVerdict();
+  verdict.artifactReferences = ["report"];
+  const store = new ArtifactStore({ root: path.join(temporary, "store") });
+
+  await assert.rejects(
+    store.importEvidence({
+      context,
+      verdict,
+      sourceDirectory: source,
+      files: ["report", "REPORT/detail.md"],
+      createdAt,
+    }),
+    /collides with another portable path/,
+  );
+  await assert.rejects(
+    store.importEvidence({
+      context,
+      verdict,
+      sourceDirectory: source,
+      files: ["MANIFEST.JSON/detail.md"],
+      createdAt,
+    }),
+    /collides with another portable path/,
+  );
 });
 
 test("canonicalizes configured roots reached through an ancestor symlink", async (t) => {
