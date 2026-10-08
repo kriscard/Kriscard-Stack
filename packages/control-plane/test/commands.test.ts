@@ -91,6 +91,90 @@ test("a reserved idempotency key produces one durable receipt, even after reopen
   await recovered.close();
 });
 
+test("command versions and ordered events survive reconnect and restart", async (t) => {
+  const root = await tempRoot();
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const adapter = {
+    classify: () => "idempotent_with_key" as const,
+    async execute() {
+      return "receipt-one";
+    },
+  };
+  const input = { key: "versioned", operation: "probe" };
+  const runtime = await openControlPlane(root, BACKGROUND_CONTEXT, adapter);
+  let finalVersion: number;
+  try {
+    assert.equal((await runtime.state()).version, 0);
+    const reserved = await runtime.submitVersioned(input, 0);
+    assert.equal(reserved.version, 1);
+    await assert.rejects(
+      runtime.submitVersioned({ key: "stale", operation: "probe" }, 0),
+      /version changed/,
+    );
+    assert.equal(
+      (await runtime.submitVersioned(input, 0)).taskId,
+      reserved.taskId,
+    );
+    await waitForCommand(runtime, input.key, "completed");
+    const snapshot = await runtime.state();
+    finalVersion = snapshot.version;
+    assert.equal(
+      snapshot.commands[input.key]?.receipt?.reference,
+      "receipt-one",
+    );
+    const history = await runtime.eventsAfter(0);
+    assert.equal(history.version, finalVersion);
+    assert.deepEqual(
+      history.events.map((event) => event.position),
+      Array.from({ length: finalVersion }, (_, index) => index + 1),
+    );
+    assert.equal(history.events[0]?.command.status, "queued");
+    assert.equal(history.events.at(-1)?.command.status, "completed");
+    assert.deepEqual((await runtime.eventsAfter(finalVersion)).events, []);
+    history.events[0]!.command.status = "failed";
+    assert.equal(
+      (await runtime.eventsAfter(0)).events[0]?.command.status,
+      "queued",
+    );
+  } finally {
+    await runtime.close();
+  }
+  const recovered = await openControlPlane(root, BACKGROUND_CONTEXT, adapter);
+  try {
+    assert.equal((await recovered.state()).version, finalVersion!);
+    assert.equal(
+      (await recovered.eventsAfter(0)).events.at(-1)?.command.status,
+      "completed",
+    );
+  } finally {
+    await recovered.close();
+  }
+});
+
+test("oversized command identifiers cannot enter the durable event log", async (t) => {
+  const root = await tempRoot();
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const runtime = await openControlPlane(root, BACKGROUND_CONTEXT, {
+    classify: () => "idempotent_with_key" as const,
+    async execute() {
+      return "receipt";
+    },
+  });
+  try {
+    await assert.rejects(
+      runtime.submit({ key: "k".repeat(257), operation: "probe" }),
+      /at most 256 characters/,
+    );
+    await assert.rejects(
+      runtime.submit({ key: "valid", operation: "o".repeat(257) }),
+      /at most 256 characters/,
+    );
+    assert.deepEqual(await runtime.state(), { version: 0, commands: {} });
+  } finally {
+    await runtime.close();
+  }
+});
+
 test("idempotency keys matching inherited object names remain distinct reservations", async (t) => {
   const root = await tempRoot();
   t.onTestFinished(() => rm(root, { recursive: true, force: true }));
