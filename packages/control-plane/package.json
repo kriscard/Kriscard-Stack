@@ -7,6 +7,14 @@
     "./artifacts": {
       "types": "./dist/artifacts/index.d.ts",
       "import": "./dist/artifacts/index.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime/index.d.ts",
+      "import": "./dist/runtime/index.js"
+    },
+    "./api": {
+      "types": "./dist/api/index.d.ts",
+      "import": "./dist/api/index.js"
     }
   },
   "scripts": {
