@@ -84,10 +84,21 @@ export interface CommandAdapter {
   classify(operation: string): CommandReplayClass | undefined;
   /** Maximum time one dispatch may hold its lease; defaults to one minute. */
   leaseDurationMs?: number;
+  /** Return a short opaque receipt reference (at most 256 characters), never artifact bytes or a secret. */
   execute(input: CommandInput, signal: AbortSignal): Promise<string>;
 }
 
 class CommandDeadlineError extends Error {}
+class InvalidReceiptReferenceError extends Error {}
+
+function describeCommandFailure(error: unknown): string {
+  if (
+    error instanceof CommandDeadlineError ||
+    error instanceof InvalidReceiptReferenceError
+  )
+    return error.message;
+  return "Command adapter failed; external outcome may be unknown";
+}
 
 export function createCommandTask(adapter: CommandAdapter) {
   const leaseDurationMs = adapter.leaseDurationMs ?? 60_000;
@@ -192,8 +203,11 @@ export function createCommandTask(adapter: CommandAdapter) {
             const ledger = await tx.doc(Commands);
             const record = ledger.commands[task.input.key];
             if (!record) throw new Error("Missing command reservation");
-            record.error = String(error);
-            if (error instanceof CommandDeadlineError) {
+            record.error = describeCommandFailure(error);
+            if (
+              error instanceof CommandDeadlineError ||
+              error instanceof InvalidReceiptReferenceError
+            ) {
               record.status = "needs_reconciliation";
               delete record.leaseExpiresAt;
               appendCommandEvent(ledger, record);
@@ -293,7 +307,7 @@ async function executeOnce(
       const record = ledger.commands[input.key];
       if (!record) throw new Error("Missing unsafe intent");
       record.status = "needs_reconciliation";
-      record.error = `External outcome unknown: ${String(error)}`;
+      record.error = `External outcome unknown: ${describeCommandFailure(error)}`;
       delete record.leaseExpiresAt;
       appendCommandEvent(ledger, record);
       return {
@@ -357,6 +371,14 @@ async function completeCommand(
   runtime: TaskRuntime<CommandInput, CommandPhase, CommandReceipt, object>,
   context: Context,
 ): Promise<void> {
+  if (
+    typeof reference !== "string" ||
+    reference.length < 1 ||
+    reference.length > 256
+  )
+    throw new InvalidReceiptReferenceError(
+      "Adapter returned an invalid receipt reference; inspect the external outcome",
+    );
   await runtime.commit(async (tx) => {
     const ledger = await tx.doc(Commands);
     const record = ledger.commands[key];
@@ -416,6 +438,10 @@ export async function reserveCommand(
       }
       return { taskId: existing.taskId, version: ledger.version ?? 0 };
     }
+    if (input.key.length > 256 || input.operation.length > 256)
+      throw new Error(
+        "Command key and operation must be at most 256 characters",
+      );
     if (
       expectedVersion !== undefined &&
       expectedVersion !== (ledger.version ?? 0)

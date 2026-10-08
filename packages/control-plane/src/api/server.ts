@@ -140,6 +140,7 @@ export async function startApiServer(options: ApiServerOptions): Promise<{
   const host = options.host ?? "127.0.0.1";
   if (host !== "127.0.0.1" && host !== "::1")
     throw new Error("The control-plane API can only bind to a loopback IP");
+  const displayHost = host === "::1" ? "[::1]" : host;
   const credentials = new Map<string, Buffer>();
   for (const [deviceId, secret] of Object.entries(options.deviceCredentials)) {
     if (
@@ -204,7 +205,7 @@ export async function startApiServer(options: ApiServerOptions): Promise<{
     }
     if (request.headers["x-kriscard-api-version"] !== String(API_VERSION))
       throw new ApiError(426, "VERSION_REQUIRED", "Supported API version: 1");
-    const url = new URL(request.url ?? "/", `http://${host}`);
+    const url = new URL(request.url ?? "/", `http://${displayHost}`);
     if (!url.pathname.startsWith("/v1/"))
       throw new ApiError(404, "NOT_FOUND", "Unknown API route");
 
@@ -316,7 +317,6 @@ export async function startApiServer(options: ApiServerOptions): Promise<{
   const address = server.address();
   if (!address || typeof address === "string")
     throw new Error("No TCP address");
-  const displayHost = host === "::1" ? "[::1]" : host;
   let closed = false;
   return {
     url: `http://${displayHost}:${address.port}`,

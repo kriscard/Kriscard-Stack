@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { test } from "vitest";
+import { test, vi } from "vitest";
 
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
@@ -150,6 +150,101 @@ test("versioned clients share durable commands, reject stale writes, and authent
     headers: { "X-Kriscard-Api-Version": "1" },
   });
   assert.equal(missingToken.status, 401);
+});
+
+test("the explicitly supported IPv6 loopback address serves requests", async (t) => {
+  const { runtime } = await fixture(t);
+  const server = await startApiServer({
+    runtime,
+    deviceCredentials: { [deviceId]: credential },
+    host: "::1",
+  });
+  t.onTestFinished(() => server.close());
+  assert.match(server.url, /^http:\/\/\[::1\]:/);
+  const client = createControlPlaneClient({
+    url: server.url,
+    deviceId,
+    credential,
+  });
+  assert.deepEqual(await client.health(), { status: "ok", apiVersion: 1 });
+});
+
+test("oversized adapter output never creates an unreadable event", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "kriscard-api-large-event-"));
+  const adapter = {
+    classify: (operation: string) =>
+      operation === "manual-reference"
+        ? ("manual_recovery" as const)
+        : ("idempotent_with_key" as const),
+    async execute(input: { operation: string }) {
+      if (
+        input.operation === "large-reference" ||
+        input.operation === "manual-reference"
+      )
+        return "r".repeat(1_100_000);
+      throw new Error("e".repeat(1_100_000));
+    },
+  };
+  const runtime = await openControlPlane(root, BACKGROUND_CONTEXT, adapter);
+  const server = await startApiServer({
+    runtime,
+    deviceCredentials: { [deviceId]: credential },
+  });
+  t.onTestFinished(async () => {
+    await server.close();
+    await runtime.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  const client = createControlPlaneClient({
+    url: server.url,
+    deviceId,
+    credential,
+  });
+  for (const operation of [
+    "large-reference",
+    "large-error",
+    "manual-reference",
+  ]) {
+    const key = operation;
+    await client.submit({
+      key,
+      operation,
+      expectedVersion: (await client.state()).version,
+    });
+    await vi.waitUntil(
+      async () => {
+        const record = await runtime.command(key);
+        return record &&
+          ["completed", "failed", "needs_reconciliation"].includes(
+            record.status,
+          )
+          ? record
+          : false;
+      },
+      { timeout: 3_000, interval: 10 },
+    );
+  }
+  const events = client.events(0);
+  const terminal = new Map<string, string>();
+  try {
+    for await (const event of events) {
+      if (
+        ["completed", "failed", "needs_reconciliation"].includes(
+          event.command.status,
+        )
+      )
+        terminal.set(event.command.key, event.command.status);
+      if (terminal.size === 3) break;
+    }
+  } finally {
+    await events.return(undefined);
+  }
+  assert.deepEqual(
+    [...terminal.values()],
+    ["needs_reconciliation", "needs_reconciliation", "needs_reconciliation"],
+  );
+  assert.equal((await client.command("large-reference")).receipt, undefined);
+  assert.equal((await client.command("manual-reference")).attempts, 1);
 });
 
 test("a port conflict fails without disrupting the active API", async (t) => {

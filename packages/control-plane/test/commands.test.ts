@@ -151,6 +151,30 @@ test("command versions and ordered events survive reconnect and restart", async 
   }
 });
 
+test("oversized command identifiers cannot enter the durable event log", async (t) => {
+  const root = await tempRoot();
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const runtime = await openControlPlane(root, BACKGROUND_CONTEXT, {
+    classify: () => "idempotent_with_key" as const,
+    async execute() {
+      return "receipt";
+    },
+  });
+  try {
+    await assert.rejects(
+      runtime.submit({ key: "k".repeat(257), operation: "probe" }),
+      /at most 256 characters/,
+    );
+    await assert.rejects(
+      runtime.submit({ key: "valid", operation: "o".repeat(257) }),
+      /at most 256 characters/,
+    );
+    assert.deepEqual(await runtime.state(), { version: 0, commands: {} });
+  } finally {
+    await runtime.close();
+  }
+});
+
 test("idempotency keys matching inherited object names remain distinct reservations", async (t) => {
   const root = await tempRoot();
   t.onTestFinished(() => rm(root, { recursive: true, force: true }));
