@@ -30,7 +30,6 @@ let activeRuntime = false;
 const uncertainOwners: Array<Awaited<ReturnType<typeof acquireOwnerLock>>> = [];
 
 export interface OpenControlPlane {
-  harness: DurableHarness;
   submit(input: CommandRequest): Promise<number>;
   command(key: string): Promise<Readonly<CommandRecord> | undefined>;
   close(): Promise<void>;
@@ -97,7 +96,6 @@ export async function openControlPlane(
     let closed = false;
 
     return {
-      harness: openedHarness,
       submit(input): Promise<number> {
         if (!commandTask || !commandAdapter)
           throw new Error("No command adapter is configured");

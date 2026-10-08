@@ -10,6 +10,7 @@ import { test } from "vitest";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { CommandReplayClass } from "../src/runtime/commands.js";
 import { openControlPlane } from "../src/runtime/open.js";
+import { waitForCommand } from "./wait-for-command.js";
 
 async function tempRoot() {
   return mkdtemp(path.join(tmpdir(), "kriscard-command-"));
@@ -75,9 +76,7 @@ test("a reserved idempotency key produces one durable receipt, even after reopen
     runtime.submit({ ...input, operation: "another" }),
     /Idempotency key/,
   );
-  await (
-    await runtime.harness.root(BACKGROUND_CONTEXT)
-  ).waitForIdle(BACKGROUND_CONTEXT);
+  await waitForCommand(runtime, input.key, "completed");
   assert.equal(executions, 1);
   assert.equal(
     (await runtime.command(input.key))?.receipt?.reference,
@@ -106,7 +105,7 @@ test("idempotency keys matching inherited object names remain distinct reservati
   const ids = new Map<string, number>();
   try {
     await runtime.submit({ key: "ordinary", operation: "probe" });
-    await runtime.harness.waitForIdle(BACKGROUND_CONTEXT);
+    await waitForCommand(runtime, "ordinary", "completed");
     for (const key of keys) assert.equal(await runtime.command(key), undefined);
     for (const key of keys) {
       const input = { key, operation: "probe" };
@@ -114,8 +113,8 @@ test("idempotency keys matching inherited object names remain distinct reservati
       ids.set(key, id);
       assert.equal(await runtime.submit(input), id);
     }
-    await runtime.harness.waitForIdle(BACKGROUND_CONTEXT);
     for (const key of keys) {
+      await waitForCommand(runtime, key, "completed");
       assert.equal(
         (await runtime.command(key))?.receipt?.reference,
         `receipt-${key}`,
@@ -152,7 +151,7 @@ test("command reads cannot mutate the authoritative live state", async (t) => {
   });
   try {
     await runtime.submit({ key: "detached", operation: "probe" });
-    await runtime.harness.waitForIdle(BACKGROUND_CONTEXT);
+    await waitForCommand(runtime, "detached", "completed");
     const result = await runtime.command("detached");
     assert.equal(result?.status, "completed");
     assert.ok(result.receipt);
@@ -192,7 +191,7 @@ test("editing a running command read cannot block its receipt", async (t) => {
     assert.equal(read.status, "running");
     Reflect.set(read, "status", "failed");
     finish("actual-receipt");
-    await runtime.harness.waitForIdle(BACKGROUND_CONTEXT);
+    await waitForCommand(runtime, "running-read", "completed");
     assert.equal(
       (await runtime.command("running-read"))?.receipt?.reference,
       "actual-receipt",
@@ -219,9 +218,7 @@ test("only replay-safe commands retry automatically", async (t) => {
     key: "safe",
     operation: "probe",
   });
-  await (
-    await runtime.harness.root(BACKGROUND_CONTEXT)
-  ).waitForIdle(BACKGROUND_CONTEXT);
+  await waitForCommand(runtime, "safe", "completed");
   assert.equal(attempts, 3);
   assert.equal(
     (await runtime.command("safe"))?.receipt?.reference,
@@ -245,9 +242,7 @@ test("an unsafe command can complete once with a durable receipt", async (t) => 
     key: "unsafe-ok",
     operation: "probe",
   });
-  await (
-    await runtime.harness.root(BACKGROUND_CONTEXT)
-  ).waitForIdle(BACKGROUND_CONTEXT);
+  await waitForCommand(runtime, "unsafe-ok", "completed");
   assert.equal(attempts, 1);
   assert.equal(
     (await runtime.command("unsafe-ok"))?.receipt?.reference,
@@ -289,9 +284,7 @@ test("an unsafe intent interrupted before its receipt is not dispatched again", 
   await submission;
 
   const recovered = await openControlPlane(root, BACKGROUND_CONTEXT, adapter);
-  await (
-    await recovered.harness.root(BACKGROUND_CONTEXT)
-  ).waitForIdle(BACKGROUND_CONTEXT);
+  await waitForCommand(recovered, "interrupted", "needs_reconciliation");
   assert.equal(attempts, 1);
   assert.equal(
     (await recovered.command("interrupted"))?.status,
@@ -315,9 +308,7 @@ test("process death after an external effect cannot replay its unsafe intent", a
       return "unexpected replay";
     },
   });
-  await (
-    await recovered.harness.root(BACKGROUND_CONTEXT)
-  ).waitForIdle(BACKGROUND_CONTEXT);
+  await waitForCommand(recovered, "crash-after-effect", "needs_reconciliation");
   assert.equal(repeated, 0);
   assert.equal(
     (await recovered.command("crash-after-effect"))?.status,
@@ -360,9 +351,7 @@ test("process death after an idempotent effect resumes with the same key", async
     },
   });
   try {
-    await (
-      await recovered.harness.root(BACKGROUND_CONTEXT)
-    ).waitForIdle(BACKGROUND_CONTEXT);
+    await waitForCommand(recovered, "crash-after-effect", "completed");
     assert.equal(recoveredCalls, 1);
     assert.equal((await recovered.command("crash-after-effect"))?.attempts, 1);
     assert.equal(
@@ -396,9 +385,7 @@ test("the final keyed attempt reconciles after a crash instead of losing its rec
     },
   });
   try {
-    await (
-      await recovered.harness.root(BACKGROUND_CONTEXT)
-    ).waitForIdle(BACKGROUND_CONTEXT);
+    await waitForCommand(recovered, "crash-after-effect", "completed");
     assert.equal(reconciliations, 1);
     assert.equal(
       (await recovered.command("crash-after-effect"))?.receipt?.reference,
@@ -433,15 +420,7 @@ test("a hung adapter times out, fences retries, and allows the runtime to close"
   try {
     await runtime.submit({ key: "hung", operation: "probe" });
     await started;
-    const settled = await Promise.race([
-      runtime.harness.waitForIdle(BACKGROUND_CONTEXT).then(() => true),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 250)),
-    ]);
-    assert.equal(
-      settled,
-      true,
-      "lease deadline must settle an uncooperative adapter",
-    );
+    await waitForCommand(runtime, "hung", "needs_reconciliation", 250);
     assert.equal(
       (await runtime.command("hung"))?.status,
       "needs_reconciliation",
@@ -494,9 +473,7 @@ test("closing a runtime does not wait for an adapter that ignores cancellation",
   await submission;
   assert.equal(finishedPromptly, true);
   const recovered = await openControlPlane(root, BACKGROUND_CONTEXT, adapter);
-  await (
-    await recovered.harness.root(BACKGROUND_CONTEXT)
-  ).waitForIdle(BACKGROUND_CONTEXT);
+  await waitForCommand(recovered, "closing", "needs_reconciliation");
   assert.equal(
     (await recovered.command("closing"))?.status,
     "needs_reconciliation",
@@ -522,11 +499,7 @@ test("an unsafe hung adapter loses its lease without dispatching again", async (
   });
   try {
     await runtime.submit({ key: "unsafe-hung", operation: "probe" });
-    const settled = await Promise.race([
-      runtime.harness.waitForIdle(BACKGROUND_CONTEXT).then(() => true),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 250)),
-    ]);
-    assert.equal(settled, true);
+    await waitForCommand(runtime, "unsafe-hung", "needs_reconciliation", 250);
     assert.equal(calls, 1);
     assert.equal(
       (await runtime.command("unsafe-hung"))?.status,
@@ -567,9 +540,7 @@ test("an uncertain unsafe command stops and requires reconciliation", async (t) 
     key: "unsafe",
     operation: "probe",
   });
-  await (
-    await runtime.harness.root(BACKGROUND_CONTEXT)
-  ).waitForIdle(BACKGROUND_CONTEXT);
+  await waitForCommand(runtime, "unsafe", "needs_reconciliation");
   assert.equal(attempts, 1);
   assert.equal(
     (await runtime.command("unsafe"))?.status,

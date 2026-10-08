@@ -13,27 +13,26 @@ import path from "node:path";
 import { test } from "vitest";
 
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { defineDoc } from "@earendil-works/pi-durable";
-
 import { openControlPlane } from "../src/runtime/open.js";
-
-const Counter = defineDoc<{ count: number }>({
-  kind: "kriscard.test-counter",
-  version: 1,
-  scope: "session",
-  initial: () => ({ count: 0 }),
-});
+import { waitForCommand } from "./wait-for-command.js";
 
 test("the only owner persists SQLite state and releases ownership on close", async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "kriscard-runtime-"));
   t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   const originalUmask = process.umask();
-  const runtime = await openControlPlane(root);
+  const adapter = {
+    classify: () => "idempotent_with_key" as const,
+    async execute() {
+      return "persisted-reference";
+    },
+  };
+  const runtime = await openControlPlane(root, BACKGROUND_CONTEXT, adapter);
   t.onTestFinished(() => runtime.close());
+  assert.equal("harness" in runtime, false);
   assert.equal(process.umask(), 0o077);
-  await runtime.harness.commit(async (tx) => {
-    (await tx.doc(Counter)).count++;
-  }, BACKGROUND_CONTEXT);
+  const input = { key: "persisted", operation: "probe" };
+  const taskId = await runtime.submit(input);
+  await waitForCommand(runtime, input.key, "completed");
 
   await assert.rejects(
     openControlPlane(root),
@@ -58,12 +57,11 @@ test("the only owner persists SQLite state and releases ownership on close", asy
   await runtime.close();
   assert.equal(process.umask(), originalUmask);
 
-  const recovered = await openControlPlane(root);
-  assert.deepEqual(
-    await recovered.harness.snapshot(Counter, BACKGROUND_CONTEXT),
-    {
-      count: 1,
-    },
+  const recovered = await openControlPlane(root, BACKGROUND_CONTEXT, adapter);
+  assert.equal(await recovered.submit(input), taskId);
+  assert.equal(
+    (await recovered.command(input.key))?.receipt?.reference,
+    "persisted-reference",
   );
   await recovered.close();
 });
