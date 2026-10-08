@@ -50,17 +50,77 @@ test("work items cannot skip approved stages", () => {
       error.code === "INVALID_TRANSITION",
   );
 
+  const paused = transitionWorkItem({
+    ...common,
+    from: "requirements_review",
+    to: "paused",
+    actor: "system",
+  });
+  assert.equal(paused.pausedFrom, "requirements_review");
+
   assert.throws(
     () =>
       transitionWorkItem({
         ...common,
         from: "paused",
-        to: "approved",
+        to: "plan_review",
+        pausedFrom: paused.pausedFrom,
         actor: "system",
       }),
     (error) =>
       error instanceof CoreInvariantError &&
       error.code === "INVALID_TRANSITION",
+  );
+
+  assert.equal(
+    transitionWorkItem({
+      ...common,
+      from: "paused",
+      to: "requirements_review",
+      pausedFrom: paused.pausedFrom,
+      actor: "system",
+    }).to,
+    "requirements_review",
+  );
+});
+
+test("work-item readiness requires a verifier and current evidence", () => {
+  assert.throws(
+    () =>
+      transitionWorkItem({
+        ...common,
+        from: "verifying",
+        to: "ready_for_human",
+        actor: "implementer",
+        evidenceReadiness: { ready: true },
+      }),
+    (error) =>
+      error instanceof CoreInvariantError &&
+      error.code === "UNAUTHORIZED_TRANSITION",
+  );
+
+  assert.throws(
+    () =>
+      transitionWorkItem({
+        ...common,
+        from: "verifying",
+        to: "ready_for_human",
+        actor: "verifier",
+      }),
+    (error) =>
+      error instanceof CoreInvariantError &&
+      error.code === "INVALID_TRANSITION",
+  );
+
+  assert.equal(
+    transitionWorkItem({
+      ...common,
+      from: "verifying",
+      to: "ready_for_human",
+      actor: "verifier",
+      evidenceReadiness: { ready: true },
+    }).to,
+    "ready_for_human",
   );
 });
 

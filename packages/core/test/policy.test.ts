@@ -121,6 +121,22 @@ test("stale or self-certified evidence is not ready", () => {
   );
 });
 
+test("invalid SHA values cannot become ready", () => {
+  const evidence = verdict();
+  evidence.headSha = "not-a-sha";
+  evidence.baseSha = "also-not-a-sha";
+
+  const result = evaluateEvidenceReadiness({
+    verdict: evidence,
+    currentHeadSha: evidence.headSha,
+    currentBaseSha: evidence.baseSha,
+    implementerWorkerId: createId("worker"),
+  });
+
+  assert.equal(result.ready, false);
+  assert.deepEqual(result.reasons, ["INVALID_SHA"]);
+});
+
 test("duplicate or incomplete evidence categories are not ready", () => {
   const evidence = verdict();
   evidence.categoryResults = [

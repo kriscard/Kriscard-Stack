@@ -3,6 +3,7 @@ import type { EvidenceCategory, EvidenceVerdict } from "./schemas.js";
 
 export type EvidenceReadinessReason =
   | "VERDICT_NOT_VERIFIED"
+  | "INVALID_SHA"
   | "STALE_HEAD"
   | "STALE_BASE"
   | "IMPLEMENTER_SELF_VERIFICATION"
@@ -14,6 +15,8 @@ export interface EvidenceReadiness {
   ready: boolean;
   reasons: EvidenceReadinessReason[];
 }
+
+const gitShaPattern = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
 const requiredCategories: EvidenceCategory[] = [
   "repository_checks",
@@ -32,6 +35,14 @@ export function evaluateEvidenceReadiness(input: {
   const { verdict } = input;
 
   if (verdict.verdict !== "verified") reasons.add("VERDICT_NOT_VERIFIED");
+  if (
+    !gitShaPattern.test(verdict.headSha) ||
+    !gitShaPattern.test(verdict.baseSha) ||
+    !gitShaPattern.test(input.currentHeadSha) ||
+    !gitShaPattern.test(input.currentBaseSha)
+  ) {
+    reasons.add("INVALID_SHA");
+  }
   if (verdict.headSha !== input.currentHeadSha) reasons.add("STALE_HEAD");
   if (verdict.baseSha !== input.currentBaseSha) reasons.add("STALE_BASE");
   if (verdict.verifierWorkerId === input.implementerWorkerId) {

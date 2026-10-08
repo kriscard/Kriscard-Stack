@@ -36,7 +36,13 @@ const workItemTransitions: Record<WorkItemState, readonly WorkItemState[]> = {
     "requirements_review",
     "design_review",
     "plan_review",
+    "approved",
     "queued",
+    "running",
+    "verifying",
+    "ready_for_human",
+    "blocked",
+    "deviation",
     "cancelled",
   ],
   accepted: [],
@@ -96,6 +102,17 @@ export interface TransitionRecord<State extends string>
   subject: "work_item" | "execution_unit";
 }
 
+export interface WorkItemTransitionInput
+  extends TransitionInput<WorkItemState> {
+  pausedFrom?: WorkItemState;
+  evidenceReadiness?: { ready: boolean };
+}
+
+export interface WorkItemTransitionRecord
+  extends TransitionRecord<WorkItemState> {
+  pausedFrom?: WorkItemState;
+}
+
 function requireReasonAndIdentity<State extends string>(
   input: TransitionInput<State>,
 ): void {
@@ -120,8 +137,8 @@ function requireReasonAndIdentity<State extends string>(
 }
 
 export function transitionWorkItem(
-  input: TransitionInput<WorkItemState>,
-): TransitionRecord<WorkItemState> {
+  input: WorkItemTransitionInput,
+): WorkItemTransitionRecord {
   requireReasonAndIdentity(input);
   if (!workItemTransitions[input.from].includes(input.to)) {
     throw new CoreInvariantError(
@@ -131,6 +148,16 @@ export function transitionWorkItem(
   }
 
   const key = `${input.from}->${input.to}`;
+  if (
+    input.from === "paused" &&
+    input.to !== "cancelled" &&
+    input.pausedFrom !== input.to
+  ) {
+    throw new CoreInvariantError(
+      "INVALID_TRANSITION",
+      "A paused work item can only resume its recorded pre-pause state",
+    );
+  }
   if (workItemHumanTransitions.has(key) && input.actor !== "human") {
     throw new CoreInvariantError(
       "UNAUTHORIZED_TRANSITION",
@@ -143,8 +170,27 @@ export function transitionWorkItem(
       "Cancellation requires a human actor",
     );
   }
+  if (key === "verifying->ready_for_human") {
+    if (input.actor !== "verifier") {
+      throw new CoreInvariantError(
+        "UNAUTHORIZED_TRANSITION",
+        `${key} requires a verifier actor`,
+      );
+    }
+    if (input.evidenceReadiness?.ready !== true) {
+      throw new CoreInvariantError(
+        "INVALID_TRANSITION",
+        `${key} requires current passing evidence`,
+      );
+    }
+  }
 
-  return { subject: "work_item", ...input };
+  const { evidenceReadiness: _evidenceReadiness, ...transition } = input;
+  return {
+    subject: "work_item",
+    ...transition,
+    pausedFrom: input.to === "paused" ? input.from : undefined,
+  };
 }
 
 export function transitionExecutionUnit(

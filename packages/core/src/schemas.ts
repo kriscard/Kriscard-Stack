@@ -146,6 +146,7 @@ export const WorkItemSchema = Type.Object({
   parentWorkItemId: Type.Optional(WorkItemIdSchema),
   childWorkItemIds: Type.Array(WorkItemIdSchema, { uniqueItems: true }),
   state: WorkItemStateSchema,
+  pausedFrom: Type.Optional(WorkItemStateSchema),
   activeRevisionId: Type.Optional(RevisionIdSchema),
   initiatingHost: HostSchema,
   policy: Type.Record(Type.String(), Type.Unknown()),
