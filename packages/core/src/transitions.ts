@@ -1,5 +1,10 @@
 import { CoreInvariantError } from "./errors.js";
-import type { Actor, ExecutionUnitState, WorkItemState } from "./schemas.js";
+import {
+  TimestampSchema,
+  type Actor,
+  type ExecutionUnitState,
+  type WorkItemState,
+} from "./schemas.js";
 
 const workItemTransitions: Record<WorkItemState, readonly WorkItemState[]> = {
   discovered: ["requirements_review", "cancelled"],
@@ -128,14 +133,15 @@ function requireReasonAndIdentity<State extends string>(
       "A transition requires an idempotency key",
     );
   }
-  if (Number.isNaN(Date.parse(input.at))) {
+  if (!TimestampSchema.validate(input.at)) {
     throw new CoreInvariantError(
       "INVALID_TRANSITION",
-      "A transition requires an ISO-8601 timestamp",
+      "A transition requires a canonical UTC timestamp",
     );
   }
 }
 
+/** Applies one guarded work-item state transition. */
 export function transitionWorkItem(
   input: WorkItemTransitionInput,
 ): WorkItemTransitionRecord {
@@ -186,13 +192,14 @@ export function transitionWorkItem(
   }
 
   const { evidenceReadiness: _evidenceReadiness, ...transition } = input;
-  return {
+  const record: TransitionRecord<WorkItemState> = {
     subject: "work_item",
     ...transition,
-    pausedFrom: input.to === "paused" ? input.from : undefined,
   };
+  return input.to === "paused" ? { ...record, pausedFrom: input.from } : record;
 }
 
+/** Applies one guarded execution-unit state transition. */
 export function transitionExecutionUnit(
   input: TransitionInput<ExecutionUnitState>,
 ): TransitionRecord<ExecutionUnitState> {

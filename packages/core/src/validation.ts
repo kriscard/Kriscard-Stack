@@ -1,18 +1,24 @@
-import { type Static, type TSchema } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
+import * as z from "zod";
 
 import { CoreInvariantError } from "./errors.js";
 
-export function decodeRecord<Schema extends TSchema>(
+/** Parses an untrusted record and reports a bounded invariant error on failure. */
+export function decodeRecord<Schema extends z.ZodType>(
   schema: Schema,
   value: unknown,
-): Static<Schema> {
-  if (!Value.Check(schema, value)) {
-    const summary = [...Value.Errors(schema, value)]
+): z.output<Schema> {
+  const result = schema.safeParse(value);
+  if (!result.success) {
+    const summary = result.error.issues
       .slice(0, 3)
-      .map((error) => `${error.path || "/"}: ${error.message}`)
+      .map((issue) => {
+        const path = issue.path.length
+          ? `/${issue.path.map(String).join("/")}`
+          : "/";
+        return `${path}: ${issue.message}`;
+      })
       .join("; ");
     throw new CoreInvariantError("INVALID_RECORD", summary);
   }
-  return value as Static<Schema>;
+  return result.data;
 }

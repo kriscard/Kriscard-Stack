@@ -6,6 +6,7 @@ import {
   evaluateBudgets,
   evaluateEvidenceReadiness,
   type BudgetResource,
+  type BudgetUsage,
   type EvidenceCategory,
   type EvidenceVerdict,
 } from "../src/index.js";
@@ -48,6 +49,19 @@ test("reaching any hard budget pauses further work", () => {
     assert.equal(result.allowed, false, resource);
     assert.equal(result.exhausted[0]?.resource, resource);
   }
+});
+
+test("duplicate usage for one budget scope is rejected", () => {
+  const usage: BudgetUsage = {
+    scope: "unit",
+    scopeId: "unit-1",
+    used: { tokens: 5 },
+  };
+
+  assert.throws(
+    () => evaluateBudgets([], [usage, usage]),
+    /Duplicate budget usage for unit:unit-1/,
+  );
 });
 
 test("soft limits warn without blocking", () => {
@@ -105,44 +119,68 @@ test("current independent evidence is ready", () => {
   assert.deepEqual(result, { ready: true, reasons: [] });
 });
 
-test("stale or self-certified evidence is not ready", () => {
+test("stale head and base evidence fail independently", () => {
   const evidence = verdict();
-  const result = evaluateEvidenceReadiness({
+  const staleHead = evaluateEvidenceReadiness({
     verdict: evidence,
     currentHeadSha: "c".repeat(40),
+    currentBaseSha: evidence.baseSha,
+    implementerWorkerId: createId("worker"),
+  });
+  const staleBase = evaluateEvidenceReadiness({
+    verdict: evidence,
+    currentHeadSha: evidence.headSha,
     currentBaseSha: "d".repeat(40),
-    implementerWorkerId: evidence.verifierWorkerId,
+    implementerWorkerId: createId("worker"),
   });
 
-  assert.equal(result.ready, false);
-  assert.deepEqual(
-    new Set(result.reasons),
-    new Set(["STALE_HEAD", "STALE_BASE", "IMPLEMENTER_SELF_VERIFICATION"]),
-  );
+  assert.deepEqual(staleHead, { ready: false, reasons: ["STALE_HEAD"] });
+  assert.deepEqual(staleBase, { ready: false, reasons: ["STALE_BASE"] });
 });
 
-test("invalid SHA values cannot become ready", () => {
+test("implementers cannot verify their own evidence", () => {
   const evidence = verdict();
-  evidence.headSha = "not-a-sha";
-  evidence.baseSha = "also-not-a-sha";
-
   const result = evaluateEvidenceReadiness({
     verdict: evidence,
     currentHeadSha: evidence.headSha,
     currentBaseSha: evidence.baseSha,
+    implementerWorkerId: evidence.verifierWorkerId,
+  });
+
+  assert.deepEqual(result, {
+    ready: false,
+    reasons: ["IMPLEMENTER_SELF_VERIFICATION"],
+  });
+});
+
+test("invalid head and base SHA values fail independently", () => {
+  const invalidHead = verdict();
+  invalidHead.headSha = "not-a-sha";
+  const invalidBase = verdict();
+  invalidBase.baseSha = "also-not-a-sha";
+
+  const headResult = evaluateEvidenceReadiness({
+    verdict: invalidHead,
+    currentHeadSha: invalidHead.headSha,
+    currentBaseSha: invalidHead.baseSha,
+    implementerWorkerId: createId("worker"),
+  });
+  const baseResult = evaluateEvidenceReadiness({
+    verdict: invalidBase,
+    currentHeadSha: invalidBase.headSha,
+    currentBaseSha: invalidBase.baseSha,
     implementerWorkerId: createId("worker"),
   });
 
-  assert.equal(result.ready, false);
-  assert.deepEqual(result.reasons, ["INVALID_SHA"]);
+  assert.deepEqual(headResult, { ready: false, reasons: ["INVALID_SHA"] });
+  assert.deepEqual(baseResult, { ready: false, reasons: ["INVALID_SHA"] });
 });
 
 test("duplicate or incomplete evidence categories are not ready", () => {
   const evidence = verdict();
-  evidence.categoryResults = [
-    evidence.categoryResults[0]!,
-    evidence.categoryResults[0]!,
-  ];
+  const firstCategory = evidence.categoryResults[0];
+  if (!firstCategory) assert.fail("Verdict fixture has no categories");
+  evidence.categoryResults = [firstCategory, firstCategory];
 
   const result = evaluateEvidenceReadiness({
     verdict: evidence,

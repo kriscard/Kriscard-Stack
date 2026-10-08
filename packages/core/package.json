@@ -11,11 +11,11 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "rm -rf .test-dist && tsc -p tsconfig.test.json && node --test .test-dist/test/**/*.test.js",
+    "test": "rm -rf .test-dist && tsc -p tsconfig.test.json && node --test .test-dist/test/*.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@sinclair/typebox": "0.34.52"
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/node": "24.10.0",

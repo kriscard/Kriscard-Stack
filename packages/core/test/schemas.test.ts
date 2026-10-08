@@ -1,71 +1,175 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Value } from "@sinclair/typebox/value";
 
 import {
+  CoreRecordJsonSchemas,
   CoreRecordSchemas,
   createId,
   decodeRecord,
   EvidenceVerdictSchema,
   ProjectIdSchema,
   ProjectSchema,
+  StateTransitionSchema,
+  TimestampSchema,
+  WorkItemSchema,
 } from "../src/index.js";
 
 test("createId returns an opaque ID accepted by its schema", () => {
   const id = createId("project");
 
   assert.match(id, /^prj_/);
-  assert.equal(Value.Check(ProjectIdSchema, id), true);
-  assert.equal(Value.Check(ProjectIdSchema, createId("unit")), false);
+  assert.equal(ProjectIdSchema.validate(id), true);
+  assert.equal(ProjectIdSchema.validate(createId("unit")), false);
 });
 
-test("decodeRecord rejects invalid records", () => {
+test("decodeRecord rejects invalid records with bounded field errors", () => {
   assert.throws(
     () => decodeRecord(ProjectSchema, { schemaVersion: 1 }),
-    /Expected required property/,
+    (error) =>
+      error instanceof Error &&
+      error.message.startsWith("/id:") &&
+      error.message.split("; ").length === 3,
   );
 });
 
 test("decodeRecord retains unknown additive fields", () => {
-  const raw = {
-    schemaVersion: 1 as const,
+  const raw: unknown = {
+    schemaVersion: 1,
     id: createId("project"),
     repositoryFingerprint: "github.com/kriscard/example",
     canonicalRemote: "https://github.com/kriscard/example.git",
     localPaths: ["/tmp/example"],
     defaultBranch: "main",
-    forge: "github" as const,
-    requiredCapabilities: ["git" as const],
+    forge: "github",
+    requiredCapabilities: ["git"],
     futureField: { retained: true },
   };
 
-  const decoded = decodeRecord(
-    ProjectSchema,
-    JSON.parse(JSON.stringify(raw)) as unknown,
-  );
+  const serialized: unknown = JSON.parse(JSON.stringify(raw));
+  const decoded = decodeRecord(ProjectSchema, serialized);
 
-  assert.deepEqual(
-    (decoded as typeof decoded & { futureField: unknown }).futureField,
-    { retained: true },
+  assert.deepEqual(decoded.futureField, { retained: true });
+});
+
+test("nested additive fields survive repeated record decoding", () => {
+  const raw: unknown = {
+    schemaVersion: 1,
+    id: createId("workItem"),
+    type: "feature",
+    source: { kind: "user", futureSourceField: "keep" },
+    projectId: createId("project"),
+    childWorkItemIds: [],
+    state: "discovered",
+    initiatingHost: "pi",
+    policy: {},
+    futureRecordField: { keep: true },
+  };
+
+  const firstDecode = decodeRecord(WorkItemSchema, raw);
+  const serialized: unknown = JSON.parse(JSON.stringify(firstDecode));
+  const secondDecode = decodeRecord(WorkItemSchema, serialized);
+
+  assert.equal(secondDecode.source.futureSourceField, "keep");
+  assert.deepEqual(secondDecode.futureRecordField, { keep: true });
+});
+
+test("evidence records require the verified base SHA specifically", () => {
+  assert.throws(
+    () =>
+      decodeRecord(EvidenceVerdictSchema, {
+        schemaVersion: 1,
+        id: createId("verdict"),
+        unitId: createId("unit"),
+        requirementIds: ["R1"],
+        evidenceIds: ["V1"],
+        verifierWorkerId: createId("worker"),
+        headSha: "a".repeat(40),
+        categoryResults: [
+          {
+            category: "repository_checks",
+            status: "passed",
+            receiptIds: ["receipt-1"],
+          },
+        ],
+        artifactReferences: [],
+        verdict: "verified",
+        createdAt: "2026-10-08T00:00:00Z",
+      }),
+    /\/baseSha:/,
   );
 });
 
-test("evidence records require the verified base SHA", () => {
-  assert.throws(() =>
-    decodeRecord(EvidenceVerdictSchema, {
-      schemaVersion: 1,
-      id: createId("verdict"),
-      unitId: createId("unit"),
-      requirementIds: ["R1"],
-      evidenceIds: ["V1"],
-      verifierWorkerId: createId("worker"),
-      headSha: "a".repeat(40),
-      categoryResults: [],
-      artifactReferences: [],
-      verdict: "verified",
-      createdAt: "2026-10-08T00:00:00Z",
+test("transition schemas keep subject IDs and states in the same domain", () => {
+  const common = {
+    schemaVersion: 1,
+    actor: "human",
+    reason: "Approved",
+    occurredAt: "2026-10-08T00:00:00Z",
+    idempotencyKey: "approval-1",
+  } as const;
+
+  assert.equal(
+    StateTransitionSchema.validate({
+      ...common,
+      subject: "work_item",
+      subjectId: createId("workItem"),
+      priorState: "plan_review",
+      nextState: "approved",
     }),
+    true,
   );
+  assert.equal(
+    StateTransitionSchema.validate({
+      ...common,
+      subject: "work_item",
+      subjectId: createId("unit"),
+      priorState: "planned",
+      nextState: "ready",
+    }),
+    false,
+  );
+});
+
+test("timestamp validation accepts canonical UTC instants only", () => {
+  assert.equal(TimestampSchema.validate("2026-10-08T00:00:00Z"), true);
+  assert.equal(TimestampSchema.validate("2026-10-08"), false);
+  assert.equal(TimestampSchema.validate("2026-10-08T01:00:00+01:00"), false);
+  assert.equal(TimestampSchema.validate("2026-02-30T00:00:00Z"), false);
+});
+
+test("JSON Schema projections preserve loose objects and discriminated unions", () => {
+  assert.notEqual(CoreRecordJsonSchemas.project.additionalProperties, false);
+  assert.ok("oneOf" in CoreRecordJsonSchemas.stateTransition);
+  assert.equal(
+    JSON.stringify(CoreRecordJsonSchemas).includes("transform"),
+    false,
+  );
+});
+
+test("runtime and JSON Schema both require unique task IDs", () => {
+  const executionUnit = {
+    schemaVersion: 1,
+    id: createId("unit"),
+    workItemId: createId("workItem"),
+    taskIds: ["T1", "T1"],
+    goal: "One goal",
+    state: "planned",
+    dependencies: [],
+    conflictKeys: [],
+    expectedChangedAreas: ["packages/core"],
+    pullRequestGroup: "P1",
+    requiredCapabilities: ["git"],
+    expectedEvidenceIds: ["V1"],
+  };
+
+  assert.equal(CoreRecordSchemas.executionUnit.validate(executionUnit), false);
+  const taskIdsSchema = CoreRecordJsonSchemas.executionUnit.properties?.taskIds;
+  assert.ok(
+    taskIdsSchema &&
+      typeof taskIdsSchema === "object" &&
+      "uniqueItems" in taskIdsSchema,
+  );
+  assert.equal(taskIdsSchema.uniqueItems, true);
 });
 
 test("every core record schema accepts a representative record", () => {
@@ -229,11 +333,37 @@ test("every core record schema accepts a representative record", () => {
     },
   };
 
-  for (const [name, schema] of Object.entries(CoreRecordSchemas)) {
-    assert.equal(
-      Value.Check(schema, fixtures[name as keyof typeof fixtures]),
-      true,
-      name,
-    );
+  const cases = [
+    [
+      "stateTransition",
+      CoreRecordSchemas.stateTransition,
+      fixtures.stateTransition,
+    ],
+    ["project", CoreRecordSchemas.project, fixtures.project],
+    ["workItem", CoreRecordSchemas.workItem, fixtures.workItem],
+    [
+      "artifactRevision",
+      CoreRecordSchemas.artifactRevision,
+      fixtures.artifactRevision,
+    ],
+    ["executionUnit", CoreRecordSchemas.executionUnit, fixtures.executionUnit],
+    ["attempt", CoreRecordSchemas.attempt, fixtures.attempt],
+    ["pullRequest", CoreRecordSchemas.pullRequest, fixtures.pullRequest],
+    [
+      "evidenceVerdict",
+      CoreRecordSchemas.evidenceVerdict,
+      fixtures.evidenceVerdict,
+    ],
+    ["humanGate", CoreRecordSchemas.humanGate, fixtures.humanGate],
+    [
+      "principleCandidate",
+      CoreRecordSchemas.principleCandidate,
+      fixtures.principleCandidate,
+    ],
+    ["machine", CoreRecordSchemas.machine, fixtures.machine],
+  ] as const;
+
+  for (const [name, schema, fixture] of cases) {
+    assert.equal(schema.validate(fixture), true, name);
   }
 });

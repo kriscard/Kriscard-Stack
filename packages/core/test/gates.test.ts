@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Value } from "@sinclair/typebox/value";
 
 import {
   CoreInvariantError,
@@ -37,7 +36,20 @@ test("gate resolution is one atomic human record", () => {
     resolvedAt: "2026-10-08T01:00:00Z",
     resolvedBy: "human",
   });
-  assert.equal(Value.Check(HumanGateSchema, resolved), true);
+  assert.equal(HumanGateSchema.validate(resolved), true);
+});
+
+test("gate resolution requires a canonical timestamp", () => {
+  assert.throws(
+    () =>
+      resolveHumanGate({
+        gate: gate(),
+        decision: "accept",
+        actor: "human",
+        resolvedAt: "2026-10-08",
+      }),
+    /canonical UTC timestamp/,
+  );
 });
 
 test("non-human and unlisted gate decisions fail", () => {
@@ -88,14 +100,14 @@ test("resolved gates cannot be resolved twice", () => {
 
 test("partial or non-human resolution shapes fail schema validation", () => {
   assert.equal(
-    Value.Check(HumanGateSchema, {
+    HumanGateSchema.validate({
       ...gate(),
       resolution: "auto_accept",
     }),
     false,
   );
   assert.equal(
-    Value.Check(HumanGateSchema, {
+    HumanGateSchema.validate({
       ...gate(),
       resolution: {
         decision: "accept",

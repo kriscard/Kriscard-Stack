@@ -24,6 +24,7 @@ export interface GraphValidation {
   issues: GraphIssue[];
 }
 
+/** Validates task ownership, dependencies, and pull-request stack ancestry. */
 export function validateExecutionGraph(
   units: readonly ExecutionUnit[],
 ): GraphValidation {
@@ -106,62 +107,79 @@ export function validateExecutionGraph(
     }
   }
 
-  const visited = new Set<UnitId>();
-  const active = new Set<UnitId>();
-  const stack: UnitId[] = [];
-  const cycleMembers = new Set<UnitId>();
-
-  function visit(unitId: UnitId): void {
-    if (active.has(unitId)) {
-      const cycleStart = stack.indexOf(unitId);
-      for (const member of stack.slice(cycleStart)) cycleMembers.add(member);
-      return;
-    }
-    if (visited.has(unitId)) return;
-
-    active.add(unitId);
-    stack.push(unitId);
-    for (const dependency of byId.get(unitId)?.dependencies ?? []) {
-      if (byId.has(dependency)) visit(dependency);
-    }
-    stack.pop();
-    active.delete(unitId);
-    visited.add(unitId);
-  }
-
-  for (const unitId of byId.keys()) visit(unitId);
+  const unitIds = [...byId.keys()];
+  const cycleMembers = findCycleMembers(unitIds, (unitId) =>
+    (byId.get(unitId)?.dependencies ?? []).filter((dependency) =>
+      byId.has(dependency),
+    ),
+  );
   for (const unitId of cycleMembers) {
     issues.push({ code: "CYCLE", unitId });
   }
 
-  const stackVisited = new Set<UnitId>();
-  const stackActive = new Set<UnitId>();
-  const ancestry: UnitId[] = [];
-  const stackCycleMembers = new Set<UnitId>();
-
-  function visitStack(unitId: UnitId): void {
-    if (stackActive.has(unitId)) {
-      const cycleStart = ancestry.indexOf(unitId);
-      for (const member of ancestry.slice(cycleStart)) {
-        stackCycleMembers.add(member);
-      }
-      return;
-    }
-    if (stackVisited.has(unitId)) return;
-
-    stackActive.add(unitId);
-    ancestry.push(unitId);
+  const stackCycleMembers = findCycleMembers(unitIds, (unitId) => {
     const parent = byId.get(unitId)?.stackParentUnitId;
-    if (parent && parent !== unitId && byId.has(parent)) visitStack(parent);
-    ancestry.pop();
-    stackActive.delete(unitId);
-    stackVisited.add(unitId);
-  }
-
-  for (const unitId of byId.keys()) visitStack(unitId);
+    return parent && parent !== unitId && byId.has(parent) ? [parent] : [];
+  });
   for (const unitId of stackCycleMembers) {
     issues.push({ code: "STACK_CYCLE", unitId });
   }
 
   return { valid: issues.length === 0, issues };
+}
+
+function findCycleMembers(
+  nodes: readonly UnitId[],
+  neighbors: (node: UnitId) => readonly UnitId[],
+): Set<UnitId> {
+  const visited = new Set<UnitId>();
+  const activeIndexes = new Map<UnitId, number>();
+  const cycleMembers = new Set<UnitId>();
+
+  for (const root of nodes) {
+    if (visited.has(root)) continue;
+
+    const path: UnitId[] = [];
+    const frames: Array<{
+      node: UnitId;
+      neighbors: readonly UnitId[];
+      nextNeighbor: number;
+    }> = [{ node: root, neighbors: neighbors(root), nextNeighbor: 0 }];
+    activeIndexes.set(root, 0);
+    path.push(root);
+
+    while (frames.length > 0) {
+      const frame = frames.at(-1);
+      if (!frame) break;
+
+      if (frame.nextNeighbor < frame.neighbors.length) {
+        const neighbor = frame.neighbors[frame.nextNeighbor];
+        frame.nextNeighbor += 1;
+        if (!neighbor) continue;
+
+        const cycleStart = activeIndexes.get(neighbor);
+        if (cycleStart !== undefined) {
+          for (const member of path.slice(cycleStart)) {
+            cycleMembers.add(member);
+          }
+        } else if (!visited.has(neighbor)) {
+          activeIndexes.set(neighbor, path.length);
+          path.push(neighbor);
+          frames.push({
+            node: neighbor,
+            neighbors: neighbors(neighbor),
+            nextNeighbor: 0,
+          });
+        }
+        continue;
+      }
+
+      frames.pop();
+      path.pop();
+      activeIndexes.delete(frame.node);
+      visited.add(frame.node);
+    }
+  }
+
+  return cycleMembers;
 }

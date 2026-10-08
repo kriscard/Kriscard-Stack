@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Type, type TString } from "@sinclair/typebox";
+import * as z from "zod";
 
 export const idPrefixes = {
   project: "prj",
@@ -14,25 +14,15 @@ export const idPrefixes = {
 } as const;
 
 export type IdKind = keyof typeof idPrefixes;
-export type OpaqueId<Kind extends IdKind> = string & {
-  readonly __idKind: Kind;
-};
-
-type TId<Kind extends IdKind> = TString & {
-  static: OpaqueId<Kind>;
-};
 
 const uuidPattern =
   "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 
-export function createId<Kind extends IdKind>(kind: Kind): OpaqueId<Kind> {
-  return `${idPrefixes[kind]}_${randomUUID()}` as OpaqueId<Kind>;
-}
-
-export function idSchema<Kind extends IdKind>(kind: Kind): TId<Kind> {
-  return Type.String({
-    pattern: `^${idPrefixes[kind]}_${uuidPattern}$`,
-  }) as TId<Kind>;
+function idSchema<Kind extends IdKind>(kind: Kind) {
+  return z
+    .string()
+    .regex(new RegExp(`^${idPrefixes[kind]}_${uuidPattern}$`))
+    .brand<Kind>();
 }
 
 export const ProjectIdSchema = idSchema("project");
@@ -45,12 +35,62 @@ export const MachineIdSchema = idSchema("machine");
 export const GateIdSchema = idSchema("gate");
 export const VerdictIdSchema = idSchema("verdict");
 
-export type ProjectId = OpaqueId<"project">;
-export type WorkItemId = OpaqueId<"workItem">;
-export type RevisionId = OpaqueId<"revision">;
-export type UnitId = OpaqueId<"unit">;
-export type AttemptId = OpaqueId<"attempt">;
-export type WorkerId = OpaqueId<"worker">;
-export type MachineId = OpaqueId<"machine">;
-export type GateId = OpaqueId<"gate">;
-export type VerdictId = OpaqueId<"verdict">;
+export type ProjectId = z.output<typeof ProjectIdSchema>;
+export type WorkItemId = z.output<typeof WorkItemIdSchema>;
+export type RevisionId = z.output<typeof RevisionIdSchema>;
+export type UnitId = z.output<typeof UnitIdSchema>;
+export type AttemptId = z.output<typeof AttemptIdSchema>;
+export type WorkerId = z.output<typeof WorkerIdSchema>;
+export type MachineId = z.output<typeof MachineIdSchema>;
+export type GateId = z.output<typeof GateIdSchema>;
+export type VerdictId = z.output<typeof VerdictIdSchema>;
+
+type IdByKind = {
+  project: ProjectId;
+  workItem: WorkItemId;
+  revision: RevisionId;
+  unit: UnitId;
+  attempt: AttemptId;
+  worker: WorkerId;
+  machine: MachineId;
+  gate: GateId;
+  verdict: VerdictId;
+};
+
+export type OpaqueId<Kind extends IdKind> = IdByKind[Kind];
+type AnyId = IdByKind[IdKind];
+
+/** Creates and validates a stable identifier for the requested domain kind. */
+export function createId(kind: "project"): ProjectId;
+export function createId(kind: "workItem"): WorkItemId;
+export function createId(kind: "revision"): RevisionId;
+export function createId(kind: "unit"): UnitId;
+export function createId(kind: "attempt"): AttemptId;
+export function createId(kind: "worker"): WorkerId;
+export function createId(kind: "machine"): MachineId;
+export function createId(kind: "gate"): GateId;
+export function createId(kind: "verdict"): VerdictId;
+export function createId(kind: IdKind): AnyId {
+  const value = `${idPrefixes[kind]}_${randomUUID()}`;
+
+  switch (kind) {
+    case "project":
+      return ProjectIdSchema.parse(value);
+    case "workItem":
+      return WorkItemIdSchema.parse(value);
+    case "revision":
+      return RevisionIdSchema.parse(value);
+    case "unit":
+      return UnitIdSchema.parse(value);
+    case "attempt":
+      return AttemptIdSchema.parse(value);
+    case "worker":
+      return WorkerIdSchema.parse(value);
+    case "machine":
+      return MachineIdSchema.parse(value);
+    case "gate":
+      return GateIdSchema.parse(value);
+    case "verdict":
+      return VerdictIdSchema.parse(value);
+  }
+}

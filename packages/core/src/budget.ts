@@ -55,15 +55,25 @@ const resources: BudgetResource[] = [
   "durationMs",
 ];
 
+/** Evaluates hierarchical usage against soft and hard resource limits. */
 export function evaluateBudgets(
   policies: readonly BudgetPolicy[],
   usages: readonly BudgetUsage[],
 ): BudgetEvaluation {
   const warnings: BudgetHit[] = [];
   const exhausted: BudgetHit[] = [];
-  const usageByScope = new Map(
-    usages.map((usage) => [`${usage.scope}:${usage.scopeId}`, usage]),
-  );
+  const usageByScope = new Map<string, BudgetUsage>();
+
+  for (const usage of usages) {
+    const key = `${usage.scope}:${usage.scopeId}`;
+    if (usageByScope.has(key)) {
+      throw new CoreInvariantError(
+        "INVALID_BUDGET",
+        `Duplicate budget usage for ${key}`,
+      );
+    }
+    usageByScope.set(key, usage);
+  }
 
   for (const policy of policies) {
     const usage = usageByScope.get(`${policy.scope}:${policy.scopeId}`);

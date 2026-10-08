@@ -1,6 +1,7 @@
 import { CoreInvariantError } from "./errors.js";
-import type { Actor, HumanGate } from "./schemas.js";
+import { TimestampSchema, type Actor, type HumanGate } from "./schemas.js";
 
+/** Atomically records one allowed human decision on an unresolved gate. */
 export function resolveHumanGate(input: {
   gate: HumanGate;
   decision: string;
@@ -25,10 +26,10 @@ export function resolveHumanGate(input: {
       `${input.decision} is not an allowed decision`,
     );
   }
-  if (Number.isNaN(Date.parse(input.resolvedAt))) {
+  if (!TimestampSchema.validate(input.resolvedAt)) {
     throw new CoreInvariantError(
       "INVALID_TRANSITION",
-      "Gate resolution requires an ISO-8601 timestamp",
+      "Gate resolution requires a canonical UTC timestamp",
     );
   }
 

@@ -13,6 +13,21 @@ const common = {
   idempotencyKey: "operation-1",
 } as const;
 
+test("transitions reject non-canonical timestamps", () => {
+  assert.equal(Number.isNaN(Date.parse("2026-10-08")), false);
+  assert.throws(
+    () =>
+      transitionWorkItem({
+        ...common,
+        at: "2026-10-08",
+        from: "requirements_review",
+        to: "design_review",
+        actor: "human",
+      }),
+    /canonical UTC timestamp/,
+  );
+});
+
 test("requirements approval requires a human actor", () => {
   assert.throws(
     () =>
@@ -57,6 +72,9 @@ test("work items cannot skip approved stages", () => {
     actor: "system",
   });
   assert.equal(paused.pausedFrom, "requirements_review");
+  const pausedFrom = paused.pausedFrom;
+  if (!pausedFrom)
+    assert.fail("Paused transition did not record its prior state");
 
   assert.throws(
     () =>
@@ -64,7 +82,7 @@ test("work items cannot skip approved stages", () => {
         ...common,
         from: "paused",
         to: "plan_review",
-        pausedFrom: paused.pausedFrom,
+        pausedFrom,
         actor: "system",
       }),
     (error) =>
@@ -77,7 +95,7 @@ test("work items cannot skip approved stages", () => {
       ...common,
       from: "paused",
       to: "requirements_review",
-      pausedFrom: paused.pausedFrom,
+      pausedFrom,
       actor: "system",
     }).to,
     "requirements_review",

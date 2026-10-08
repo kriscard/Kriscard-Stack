@@ -6,7 +6,6 @@ import {
   validateExecutionGraph,
   type ExecutionUnit,
   type UnitId,
-  type WorkItemId,
 } from "../src/index.js";
 
 const workItemId = createId("workItem");
@@ -19,7 +18,7 @@ function unit(
   return {
     schemaVersion: 1,
     id: createId("unit"),
-    workItemId: workItemId as WorkItemId,
+    workItemId,
     taskIds: [taskId],
     goal: `Implement ${taskId}`,
     state: "planned",
@@ -93,6 +92,22 @@ test("stack parents must exist, differ from the child, and be dependencies", () 
       "STACK_PARENT_NOT_DEPENDENCY",
     ]),
   );
+});
+
+test("deep dependency and stack chains do not overflow the call stack", () => {
+  const units: ExecutionUnit[] = [];
+  let previous: ExecutionUnit | undefined;
+
+  for (let index = 1; index <= 15_000; index += 1) {
+    const taskId: `T${number}` = `T${index}`;
+    const evidenceId: `V${number}` = `V${index}`;
+    const current = unit(taskId, evidenceId, previous ? [previous.id] : []);
+    if (previous) current.stackParentUnitId = previous.id;
+    units.push(current);
+    previous = current;
+  }
+
+  assert.deepEqual(validateExecutionGraph(units), { valid: true, issues: [] });
 });
 
 test("stack ancestry cycles fail", () => {

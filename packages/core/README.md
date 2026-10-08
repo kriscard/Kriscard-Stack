@@ -14,6 +14,8 @@ It owns:
 
 It performs no filesystem, network, Git, process, or UI work. Those effects belong behind later adapter seams.
 
+See [`TYPE-SAFETY.md`](./TYPE-SAFETY.md) for the package's TypeScript and Zod boundary rules.
+
 ```bash
 pnpm --filter @kriscard/core test
 pnpm --filter @kriscard/core typecheck

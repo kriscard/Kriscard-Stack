@@ -25,6 +25,7 @@ const requiredCategories: EvidenceCategory[] = [
   "risk_review",
 ];
 
+/** Checks whether a verdict is current, complete, and independently produced. */
 export function evaluateEvidenceReadiness(input: {
   verdict: EvidenceVerdict;
   currentHeadSha: string;

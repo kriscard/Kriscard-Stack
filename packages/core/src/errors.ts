@@ -4,6 +4,7 @@ export type CoreErrorCode =
   | "UNAUTHORIZED_TRANSITION"
   | "INVALID_BUDGET";
 
+/** Identifies a rejected domain operation without exposing untrusted input data. */
 export class CoreInvariantError extends Error {
   constructor(
     readonly code: CoreErrorCode,
