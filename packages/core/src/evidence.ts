@@ -1,3 +1,4 @@
+import { validateExecutionGraph, type GraphIssueCode } from "./graph.js";
 import type { UnitId, WorkerId } from "./ids.js";
 import type {
   EvidenceCategory,
@@ -43,7 +44,8 @@ export type WorkItemReadinessReason =
   | "UNIT_REVISION_MISMATCH"
   | "MISSING_UNIT_VERDICT"
   | "DUPLICATE_UNIT_VERDICT"
-  | "UNEXPECTED_UNIT_VERDICT";
+  | "UNEXPECTED_UNIT_VERDICT"
+  | `GRAPH_${GraphIssueCode}`;
 
 export interface WorkItemReadiness {
   ready: boolean;
@@ -146,6 +148,11 @@ export function evaluateWorkItemReadiness(
   }
   for (const expectedUnitId of expectedUnitIdSet) {
     if (!unitsById.has(expectedUnitId)) reasons.add("MISSING_EXPECTED_UNIT");
+  }
+
+  const graph = validateExecutionGraph(input.units);
+  for (const issue of graph.issues) {
+    reasons.add(`GRAPH_${issue.code}`);
   }
 
   const evidenceByUnit = new Map<UnitId, EvidenceContext>();

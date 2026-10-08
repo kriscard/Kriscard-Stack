@@ -78,17 +78,18 @@ export function createTestWorkItem(
 export function createTestUnit(
   workItem: WorkItem,
   state: ExecutionUnitState = "verifying",
-  expectedEvidenceIds: `V${number}`[] = ["V1"],
+  expectedEvidenceIds?: `V${number}`[],
 ): ExecutionUnit {
   if (!workItem.activeRevisionId) {
     throw new Error("Test work item requires an active revision");
   }
+  const unitNumber = (workItem.executionUnitIds?.length ?? 0) + 1;
   const unit: ExecutionUnit = {
     schemaVersion: 1,
     id: createId("unit"),
     workItemId: workItem.id,
     revisionId: workItem.activeRevisionId,
-    taskIds: ["T1"],
+    taskIds: [`T${unitNumber}`],
     goal: "Verify one task",
     state,
     dependencies: [],
@@ -96,7 +97,7 @@ export function createTestUnit(
     expectedChangedAreas: ["packages/core"],
     pullRequestGroup: "P1",
     requiredCapabilities: ["git"],
-    expectedEvidenceIds,
+    expectedEvidenceIds: expectedEvidenceIds ?? [`V${unitNumber}`],
   };
   workItem.executionUnitIds ??= [];
   workItem.executionUnitIds.push(unit.id);

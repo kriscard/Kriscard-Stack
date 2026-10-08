@@ -166,6 +166,27 @@ test("work-item readiness requires current evidence for every unit", () => {
   );
 });
 
+test("work-item readiness rejects evidence IDs claimed by multiple units", () => {
+  const workItem = createTestWorkItem("verifying");
+  const first = createTestUnit(workItem);
+  const second = createTestUnit(workItem, "verifying", ["V1"]);
+
+  assert.throws(
+    () =>
+      transitionWorkItem({
+        ...common,
+        workItem,
+        to: "ready_for_human",
+        actor: "verifier",
+        evidence: {
+          units: [first, second],
+          evidence: [passingEvidence(first), passingEvidence(second)],
+        },
+      }),
+    /GRAPH_DUPLICATE_EVIDENCE_OWNER/,
+  );
+});
+
 test("paused work items cannot bypass readiness checks", () => {
   const workItem = createTestWorkItem("paused", "ready_for_human");
   const unit = createTestUnit(workItem);

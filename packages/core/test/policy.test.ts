@@ -222,7 +222,8 @@ test("work-item readiness requires the exact unit set from the active revision",
   const workItem = createTestWorkItem();
   const first = createTestUnit(workItem);
   const second = createTestUnit(workItem);
-  const extra = { ...first, id: createId("unit") };
+  const extra = createTestUnit(workItem);
+  workItem.executionUnitIds?.pop();
 
   const missing = evaluateWorkItemReadiness(workItem, {
     units: [first],
@@ -243,7 +244,10 @@ test("work-item readiness requires the exact unit set from the active revision",
 
   assert.deepEqual(missing.reasons, ["MISSING_EXPECTED_UNIT"]);
   assert.deepEqual(unexpected.reasons, ["UNEXPECTED_EXPECTED_UNIT"]);
-  assert.deepEqual(duplicate.reasons, ["DUPLICATE_EXPECTED_UNIT"]);
+  assert.deepEqual(duplicate.reasons, [
+    "DUPLICATE_EXPECTED_UNIT",
+    "GRAPH_DUPLICATE_UNIT",
+  ]);
 });
 
 test("work-item readiness rejects duplicate, unrelated, and misplaced evidence", () => {
