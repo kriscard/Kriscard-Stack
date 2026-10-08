@@ -12,7 +12,7 @@
   "scripts": {
     "validate": "node scripts/validate-workspace.mjs && node scripts/validate-skill-catalog.mjs",
     "validate:catalogs": "node scripts/validate-skill-catalog.mjs",
-    "test": "pnpm --filter @kriscard/control-plane build && vitest run",
+    "test": "pnpm --filter @kriscard/control-plane build && pnpm --filter @kriscard/cli build && vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm --filter './packages/*' --if-present typecheck",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
