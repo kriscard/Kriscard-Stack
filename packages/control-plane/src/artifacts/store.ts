@@ -548,7 +548,7 @@ export class ArtifactStore {
     initialJournal: MigrationJournal,
   ): Promise<StoredBundle> {
     let journal = initialJournal;
-    if (journal.sourceDisposition !== "retire") {
+    if (journalSourceDisposition(journal) !== "retire") {
       throw new ArtifactStoreError(
         "MIGRATION_CONFLICT",
         `Source retirement is not allowed for this operation: ${journal.migrationId}`,
@@ -874,13 +874,23 @@ function assertExpectedHash(
   }
 }
 
+function journalSourceDisposition(
+  journal: MigrationJournal,
+): "retire" | "preserve" {
+  if (journal.sourceDisposition) return journal.sourceDisposition;
+  // Older restore journals have no disposition, but their IDs are deterministic.
+  return /^restore-[0-9a-f]{24}$/.test(journal.migrationId)
+    ? "preserve"
+    : "retire";
+}
+
 function journalsMatchPrepared(
   journal: MigrationJournal,
   prepared: PreparedBundle,
 ): boolean {
   return (
     journal.sourceDirectory === prepared.sourceDirectory &&
-    journal.sourceDisposition === prepared.sourceDisposition &&
+    journalSourceDisposition(journal) === prepared.sourceDisposition &&
     journal.destinationRelative === prepared.destinationRelative &&
     comparableManifest(journal.manifest) ===
       comparableManifest(prepared.manifest) &&

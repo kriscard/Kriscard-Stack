@@ -76,6 +76,16 @@ async function temporaryTestRoot(context: TestContext): Promise<string> {
   return root;
 }
 
+async function writeLegacyJournal(journalPath: string): Promise<void> {
+  const journal = MigrationJournalSchema.parse(
+    JSON.parse(await readFile(journalPath, "utf8")),
+  );
+  const { sourceDisposition: _disposition, ...legacyJournal } = journal;
+  await writeFile(journalPath, `${JSON.stringify(legacyJournal, null, 2)}\n`, {
+    mode: 0o600,
+  });
+}
+
 test("creates a missing private data hierarchy and rejects relative XDG paths", async (t) => {
   const temporary = await temporaryTestRoot(t);
   const root = path.join(temporary, "missing", "data", "kriscard-stack");
@@ -353,6 +363,21 @@ test("imports, verifies, exports, and restores an approved revision", async (t) 
     ".migrations",
     `${restored.migrationId}.json`,
   );
+  await writeLegacyJournal(restoreJournalPath);
+  assert.equal(
+    (await restoredStore.restore(exportDirectory)).directory,
+    restored.directory,
+  );
+  await assert.rejects(
+    restoredStore.retireMigrationSource(restored.migrationId),
+    (error) =>
+      error instanceof ArtifactStoreError &&
+      error.code === "MIGRATION_CONFLICT",
+  );
+  assert.equal(
+    await readFile(path.join(exportDirectory, "spec.md"), "utf8"),
+    "# Specification\n",
+  );
   const unsafeJournal = MigrationJournalSchema.parse(
     JSON.parse(await readFile(restoreJournalPath, "utf8")),
   );
@@ -388,6 +413,9 @@ test("repeating the same import is idempotent", async (t) => {
   };
 
   const first = await store.importApprovedRevision(request);
+  await writeLegacyJournal(
+    path.join(store.root, ".migrations", "idempotent-import.json"),
+  );
   const second = await store.importApprovedRevision(request);
 
   assert.equal(second.directory, first.directory);
@@ -575,6 +603,9 @@ test("retires legacy sources only after commit and resumes retirement", async (t
     migrationId: "retirement-import",
     createdAt,
   });
+  await writeLegacyJournal(
+    path.join(storeRoot, ".migrations", "retirement-import.json"),
+  );
 
   await assert.rejects(
     interruptingStore.retireMigrationSource("retirement-import"),
