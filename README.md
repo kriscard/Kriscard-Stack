@@ -20,7 +20,7 @@ The compatible Skills revision is recorded in [`config/skills-source.json`](conf
 
 ## Development
 
-Requirements: Node.js 20 or newer and pnpm 10 or newer.
+Requirements: Node.js 20 or newer and pnpm 10 or newer. Tests use Vitest across the workspace.
 
 ```bash
 pnpm install
