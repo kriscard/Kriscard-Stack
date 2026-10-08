@@ -92,6 +92,68 @@ test("a reserved idempotency key produces one durable receipt, even after reopen
   await recovered.close();
 });
 
+test("command reads cannot mutate the authoritative live state", async (t) => {
+  const root = await tempRoot();
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const runtime = await openControlPlane(root, BACKGROUND_CONTEXT, {
+    classify: () => "idempotent_with_key" as const,
+    async execute() {
+      return "stable-receipt";
+    },
+  });
+  try {
+    await runtime.submit({ key: "detached", operation: "probe" });
+    await runtime.harness.waitForIdle(BACKGROUND_CONTEXT);
+    const result = await runtime.command("detached");
+    assert.equal(result?.status, "completed");
+    assert.ok(result.receipt);
+    Reflect.set(result, "status", "failed");
+    Reflect.set(result.receipt, "reference", "corrupted");
+    const reread = await runtime.command("detached");
+    assert.equal(reread?.status, "completed");
+    assert.equal(reread.receipt?.reference, "stable-receipt");
+  } finally {
+    await runtime.close();
+  }
+});
+
+test("editing a running command read cannot block its receipt", async (t) => {
+  const root = await tempRoot();
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  let invoked!: () => void;
+  let finish!: (reference: string) => void;
+  const started = new Promise<void>((resolve) => {
+    invoked = resolve;
+  });
+  const pending = new Promise<string>((resolve) => {
+    finish = resolve;
+  });
+  const runtime = await openControlPlane(root, BACKGROUND_CONTEXT, {
+    classify: () => "idempotent_with_key" as const,
+    async execute() {
+      invoked();
+      return pending;
+    },
+  });
+  try {
+    await runtime.submit({ key: "running-read", operation: "probe" });
+    await started;
+    const read = await runtime.command("running-read");
+    assert.ok(read);
+    assert.equal(read.status, "running");
+    Reflect.set(read, "status", "failed");
+    finish("actual-receipt");
+    await runtime.harness.waitForIdle(BACKGROUND_CONTEXT);
+    assert.equal(
+      (await runtime.command("running-read"))?.receipt?.reference,
+      "actual-receipt",
+    );
+  } finally {
+    finish("cleanup");
+    await runtime.close();
+  }
+});
+
 test("only replay-safe commands retry automatically", async (t) => {
   const root = await tempRoot();
   t.onTestFinished(() => rm(root, { recursive: true, force: true }));

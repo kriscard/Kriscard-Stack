@@ -114,7 +114,8 @@ export async function openControlPlane(
           Commands,
           BACKGROUND_CONTEXT,
         );
-        return ledger?.commands[key];
+        const record = ledger?.commands[key];
+        return record ? structuredClone(record) : undefined;
       },
       async close(): Promise<void> {
         if (closed) return;
