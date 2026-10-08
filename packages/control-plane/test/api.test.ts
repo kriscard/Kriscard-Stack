@@ -152,6 +152,20 @@ test("versioned clients share durable commands, reject stale writes, and authent
   assert.equal(missingToken.status, 401);
 });
 
+test("a port conflict fails without disrupting the active API", async (t) => {
+  const { runtime, server, client } = await fixture(t);
+  await assert.rejects(
+    startApiServer({
+      runtime,
+      deviceCredentials: { [deviceId]: credential },
+      port: Number(new URL(server.url).port),
+    }),
+    (error) =>
+      error instanceof Error && "code" in error && error.code === "EADDRINUSE",
+  );
+  assert.equal((await client.health()).status, "ok");
+});
+
 test("concurrent clients cannot both submit against the same version", async (t) => {
   const { client } = await fixture(t);
   const results = await Promise.allSettled([
