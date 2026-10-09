@@ -104,7 +104,7 @@ function extractStageDecision(markdown: string, stage: string): string {
     );
   }
   if (
-    !/\b(?:approved|approval)\b/i.test(decision) ||
+    !/\bapproved\b/i.test(decision) ||
     /\b(?:rejected|annotated|dismissed|pending|blocked|denied|denial|refused|withheld)\b/i.test(
       decision,
     ) ||

@@ -177,7 +177,7 @@ async function writeApproval(
   hashes: { specHash: string; planHash: string },
   mutate: (approval: string) => string = (approval) => approval,
 ): Promise<void> {
-  const approval = `# Approval\n\nStatus: Approved\nMethod: Plannotator\nApproved at: 2026-10-08T12:41:21Z\n\n## Approved artifacts\n\n- \`spec.md\`\n  - SHA-256: \`${hashes.specHash}\`\n- \`plan.md\`\n  - SHA-256: \`${hashes.planHash}\`\n\n## Stage approvals\n\n- Requirements: Plannotator decision requirements-approved\n- Technical Design: Plannotator decision design-approved\n- Plan: Plannotator decision plan-approved\n\n## Exceptions\n\nNone.\n`;
+  const approval = `# Approval\n\nStatus: Approved\nMethod: Plannotator\nApproved at: 2026-10-08T12:41:21Z\n\n## Approved artifacts\n\n- \`spec.md\`\n  - SHA-256: \`${hashes.specHash}\`\n- \`plan.md\`\n  - SHA-256: \`${hashes.planHash}\`\n\n## Stage approvals\n\n- Requirements: The previously approved Requirements layer is unchanged.\n- Technical Design: Plannotator returned \`approved\` for the current \`spec.md\`.\n- Plan: Plannotator returned \`approved\` for the current \`plan.md\`.\n\n## Exceptions\n\nNone.\n`;
   await writeFile(path.join(source, "approval.md"), mutate(approval));
 }
 
@@ -561,7 +561,7 @@ for (const [fixture, mutate] of [
     "not-approved stage decision",
     (approval: string) =>
       approval.replace(
-        "- Plan: Plannotator decision plan-approved",
+        "- Plan: Plannotator returned `approved` for the current `plan.md`.",
         "- Plan: Plannotator decision not approved",
       ),
   ],
@@ -569,8 +569,24 @@ for (const [fixture, mutate] of [
     "approval-denied stage decision",
     (approval: string) =>
       approval.replace(
-        "- Technical Design: Plannotator decision design-approved",
+        "- Technical Design: Plannotator returned `approved` for the current `spec.md`.",
         "- Technical Design: Plannotator decision approval denied",
+      ),
+  ],
+  [
+    "no-approval-granted stage decision",
+    (approval: string) =>
+      approval.replace(
+        "- Requirements: The previously approved Requirements layer is unchanged.",
+        "- Requirements: No approval was granted",
+      ),
+  ],
+  [
+    "approval-not-granted stage decision",
+    (approval: string) =>
+      approval.replace(
+        "- Plan: Plannotator returned `approved` for the current `plan.md`.",
+        "- Plan: Approval not granted",
       ),
   ],
 ] as const) {

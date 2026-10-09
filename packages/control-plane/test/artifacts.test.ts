@@ -45,7 +45,7 @@ function digest(content: string): string {
 }
 
 function approvalMarkdown(spec: string, plan: string): string {
-  return `# Approval\n\nStatus: Approved\nMethod: Plannotator\nApproved at: ${createdAt}\n\n## Approved artifacts\n\n- \`spec.md\`\n  - SHA-256: \`${digest(spec)}\`\n- \`plan.md\`\n  - SHA-256: \`${digest(plan)}\`\n\n## Stage approvals\n\n- Requirements: Plannotator decision requirements-approved\n- Technical Design: Plannotator decision design-approved\n- Plan: Plannotator decision plan-approved\n\n## Exceptions\n\nNone.\n`;
+  return `# Approval\n\nStatus: Approved\nMethod: Plannotator\nApproved at: ${createdAt}\n\n## Approved artifacts\n\n- \`spec.md\`\n  - SHA-256: \`${digest(spec)}\`\n- \`plan.md\`\n  - SHA-256: \`${digest(plan)}\`\n\n## Stage approvals\n\n- Requirements: The previously approved Requirements layer is unchanged.\n- Technical Design: Plannotator returned \`approved\` for the current \`spec.md\`.\n- Plan: Plannotator returned \`approved\` for the current \`plan.md\`.\n\n## Exceptions\n\nNone.\n`;
 }
 
 function createContext(): EvidenceArtifactContext {
@@ -512,7 +512,7 @@ test("rejects incomplete, conflicting, or rejected approval lifecycle metadata",
       "conflicting plan decision",
       (approval) =>
         approval.replace(
-          "- Plan: Plannotator decision plan-approved",
+          "- Plan: Plannotator returned `approved` for the current `plan.md`.",
           "- Plan: Plannotator decision rejected",
         ),
     ],
@@ -520,7 +520,7 @@ test("rejects incomplete, conflicting, or rejected approval lifecycle metadata",
       "requirements not approved",
       (approval) =>
         approval.replace(
-          "- Requirements: Plannotator decision requirements-approved",
+          "- Requirements: The previously approved Requirements layer is unchanged.",
           "- Requirements: Plannotator decision not approved",
         ),
     ],
@@ -528,8 +528,24 @@ test("rejects incomplete, conflicting, or rejected approval lifecycle metadata",
       "design approval denied",
       (approval) =>
         approval.replace(
-          "- Technical Design: Plannotator decision design-approved",
+          "- Technical Design: Plannotator returned `approved` for the current `spec.md`.",
           "- Technical Design: Plannotator decision approval denied",
+        ),
+    ],
+    [
+      "requirements no approval granted",
+      (approval) =>
+        approval.replace(
+          "- Requirements: The previously approved Requirements layer is unchanged.",
+          "- Requirements: No approval was granted",
+        ),
+    ],
+    [
+      "plan approval not granted",
+      (approval) =>
+        approval.replace(
+          "- Plan: Plannotator returned `approved` for the current `plan.md`.",
+          "- Plan: Approval not granted",
         ),
     ],
     [
