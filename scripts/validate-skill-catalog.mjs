@@ -6,6 +6,17 @@ import { fileURLToPath } from "node:url";
 const scriptPath = fileURLToPath(import.meta.url);
 const root = resolve(dirname(scriptPath), "..");
 
+const modePlaybooks = new Map([
+  ["feature", "Mutating"],
+  ["bug-fix", "Mutating"],
+  ["refactor", "Mutating"],
+  ["migration", "Mutating"],
+  ["investigation", "Read-only"],
+  ["review", "Read-only"],
+  ["release", "Mutating"],
+  ["orchestration", "Mutating"],
+]);
+
 /** @typedef {{ name: string, path: string }} Skill */
 /** @typedef {{ name: string, paths: string[] }} DuplicateSkill */
 
@@ -81,6 +92,57 @@ export function duplicateSkills(...catalogs) {
     .map(([name, paths]) => ({ name, paths }));
 }
 
+/** @param {string} repositoryRoot */
+export async function validateModePlaybooks(repositoryRoot) {
+  const modeRoot = resolve(repositoryRoot, "skills/dev/kriscard-mode");
+  const router = await readFile(resolve(modeRoot, "SKILL.md"), "utf8");
+  const links = [...router.matchAll(/\]\(playbooks\/([a-z-]+)\.md\)/g)].map(
+    ([, name]) => name,
+  );
+  const duplicateLinks = links.filter(
+    (name, index) => links.indexOf(name) !== index,
+  );
+  if (duplicateLinks.length > 0) {
+    throw new Error(
+      `Duplicate mode playbook links: ${[...new Set(duplicateLinks)].join(", ")}`,
+    );
+  }
+
+  const expectedNames = [...modePlaybooks.keys()].sort();
+  const linkedNames = [...links].sort();
+  const playbooksRoot = resolve(modeRoot, "playbooks");
+  const fileNames = (await readdir(playbooksRoot))
+    .filter((name) => name.endsWith(".md"))
+    .map((name) => name.slice(0, -3))
+    .sort();
+  if (
+    JSON.stringify(linkedNames) !== JSON.stringify(expectedNames) ||
+    JSON.stringify(fileNames) !== JSON.stringify(expectedNames)
+  ) {
+    throw new Error(
+      `Mode playbook routes and files must match: expected ${expectedNames.join(", ")}; linked ${linkedNames.join(", ")}; files ${fileNames.join(", ")}`,
+    );
+  }
+
+  for (const [name, expectedClass] of modePlaybooks) {
+    const contents = await readFile(
+      resolve(playbooksRoot, `${name}.md`),
+      "utf8",
+    );
+    const readWhen = contents
+      .match(/^> \*\*Read this when:\*\*[ \t]*([^\r\n]*)$/m)?.[1]
+      .trim();
+    if (!readWhen) throw new Error(`${name}.md requires read-when guidance`);
+
+    const sideEffectClass = contents.match(
+      /^> \*\*Side-effect class:\*\*\s*(Read-only|Mutating)\.?$/m,
+    )?.[1];
+    if (sideEffectClass !== expectedClass) {
+      throw new Error(`${name}.md must be ${expectedClass}`);
+    }
+  }
+}
+
 async function main() {
   const manifest = JSON.parse(
     await readFile(resolve(root, "config/skills-source.json"), "utf8"),
@@ -99,6 +161,8 @@ async function main() {
       `Skills checkout is ${generalRevision}; expected ${manifest.revision}`,
     );
   }
+
+  await validateModePlaybooks(root);
 
   const stackSkills = await collectSkills(root);
   const generalSkills = await collectSkills(generalRoot);
