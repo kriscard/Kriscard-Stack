@@ -6,7 +6,9 @@ import {
   mkdtemp,
   readFile,
   rm,
+  stat,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -109,6 +111,68 @@ test("doctor checks compatible sources without writing or launching a runtime", 
     ),
     "",
   );
+});
+
+test("doctor leaves directory and gitfile repository indexes unchanged", async (t) => {
+  const { options, root } = await fixture(t);
+  const linkedRepository = path.join(root, "general-worktree");
+  execFileSync("git", [
+    "-C",
+    options.generalRepository,
+    "worktree",
+    "add",
+    "--detach",
+    "-q",
+    linkedRepository,
+    "HEAD",
+  ]);
+
+  for (const generalRepository of [
+    options.generalRepository,
+    linkedRepository,
+  ]) {
+    const generalSkill = path.join(
+      generalRepository,
+      "skills",
+      "test",
+      "SKILL.md",
+    );
+    const skillMetadata = await stat(generalSkill);
+    await utimes(
+      generalSkill,
+      skillMetadata.atime,
+      new Date(skillMetadata.mtimeMs + 2_000),
+    );
+
+    const reportedIndexPath = execFileSync(
+      "git",
+      ["-C", generalRepository, "rev-parse", "--git-path", "index"],
+      { encoding: "utf8" },
+    ).trim();
+    const indexPath = path.resolve(generalRepository, reportedIndexPath);
+    const beforeContent = await readFile(indexPath);
+    const before = await stat(indexPath, { bigint: true });
+
+    assert.equal((await doctor({ ...options, generalRepository })).ok, true);
+
+    const afterContent = await readFile(indexPath);
+    const after = await stat(indexPath, { bigint: true });
+    assert.deepEqual(afterContent, beforeContent);
+    assert.deepEqual(
+      {
+        inode: after.ino,
+        size: after.size,
+        modified: after.mtimeNs,
+        changed: after.ctimeNs,
+      },
+      {
+        inode: before.ino,
+        size: before.size,
+        modified: before.mtimeNs,
+        changed: before.ctimeNs,
+      },
+    );
+  }
 });
 
 test("doctor rejects missing, empty, or single-source installed roots", async (t) => {
