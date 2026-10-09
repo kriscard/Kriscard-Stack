@@ -10,7 +10,7 @@
     "pnpm": ">=10"
   },
   "scripts": {
-    "validate": "node scripts/validate-workspace.mjs && node scripts/validate-skill-catalog.mjs",
+    "validate": "node scripts/validate-workspace.mjs && node scripts/generate-principle-catalog.mjs --check && node scripts/validate-skill-catalog.mjs",
     "validate:catalogs": "node scripts/validate-skill-catalog.mjs",
     "test": "pnpm --filter @kriscard/control-plane build && pnpm --filter @kriscard/cli build && vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm --filter './packages/*' --if-present typecheck",
