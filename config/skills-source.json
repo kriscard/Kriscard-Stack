@@ -1,6 +1,0 @@
-{
-  "$schema": "./skills-source.schema.json",
-  "repository": "https://github.com/kriscard/Skills.git",
-  "installSource": "kriscard/Skills",
-  "revision": "158a5e919605d8611dbbe83a6217b5a3d118f7f7"
-}

@@ -1,21 +1,26 @@
 {
-  "name": "@kriscard/core",
+  "name": "@kriscard/pi-runner",
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "kriscard": "./dist/bin.js"
+  },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/run.d.ts",
+      "import": "./dist/run.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "pnpm --dir ../.. exec vitest run packages/core/test",
+    "start": "node --enable-source-maps dist/bin.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit"
   },
   "dependencies": {
-    "zod": "4.6.5"
+    "@earendil-works/chord": "1.1.0",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-durable": "1.1.0"
   },
   "devDependencies": {
     "@types/node": "24.10.0",

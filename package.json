@@ -2,7 +2,7 @@
   "name": "kriscard-stack",
   "version": "0.0.0",
   "private": true,
-  "description": "Personal AI engineering workflows with durable execution and independent verification.",
+  "description": "Skill-first engineering workflows with a durable Pi agent.",
   "type": "module",
   "packageManager": "pnpm@10.34.4",
   "engines": {
@@ -10,13 +10,13 @@
     "pnpm": ">=10"
   },
   "scripts": {
-    "validate": "node scripts/validate-workspace.mjs && node scripts/generate-principle-catalog.mjs --check && node scripts/validate-skill-catalog.mjs",
-    "validate:catalogs": "node scripts/validate-skill-catalog.mjs",
-    "test": "pnpm --filter @kriscard/control-plane build && pnpm --filter @kriscard/cli build && vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit && pnpm --filter './packages/*' --if-present typecheck",
+    "build": "pnpm --filter @kriscard/pi-runner build",
+    "test": "vitest run",
+    "typecheck": "pnpm --filter @kriscard/pi-runner typecheck",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "pnpm run validate && pnpm test && pnpm run typecheck && pnpm run format:check"
+    "check": "pnpm run build && pnpm test && pnpm run typecheck && pnpm run format:check",
+    "kriscard": "node --enable-source-maps packages/pi-runner/dist/bin.js"
   },
   "devDependencies": {
     "@types/node": "24.10.0",
