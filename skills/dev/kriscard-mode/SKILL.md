@@ -8,86 +8,128 @@ description: >-
 
 # Kriscard Mode
 
-Select one focused playbook, state it, and keep its side-effect boundary visible.
-This skill routes work; it does not replace the general-purpose Skills collection.
+Select one outcome playbook, state its side-effect class, and carry approved work through explicit owners to human-controlled landing. General-purpose methods remain in the compatible `kriscard/Skills` collection.
 
-## 1. Check the operating mode
+## 1. Establish available capability
 
-Determine which capabilities are actually available before promising work:
+Classify capabilities from evidence, not package names or intended architecture:
 
-- **Durable mode:** the Kriscard Stack control plane is reachable and reports the requested capability.
-- **Plain-skills mode:** this skill and the compatible `kriscard/Skills` catalog are installed, but the control plane is unavailable.
+- **Durable mode:** a reachable control plane actually provides the requested durable operation.
+- **Plain-skills mode:** the product and general skills are available in the current host without that durable operation.
 
-Plain-skills mode can route, investigate, review, and run the `/spec` planning lifecycle in the current host session. It cannot provide crash-safe state, durable leases, automatic ready-frontier scheduling, isolated worker launch, resumable orchestration, or independent verification. Say which unavailable capability blocks the requested next step. Ordinary chat or terminal state is not a durable substitute.
+Plain-skills mode can route, perform read-only work, prepare `/spec`, and execute an approved task manually when a capable owner and the required permission are present. It cannot claim automatic frontier scheduling, crash-safe worker launch or recovery, durable leases, or independent verification that did not occur. A terminal, background process, or chat transcript is not a durable substitute.
 
-Confirm required named skills are installed before handing work to them. A missing required skill is a blocker: name it, identify the selected playbook and failed stage, preserve existing work, and give the user the install or setup action when known. Continue only after the dependency is available; never silently approximate another skill's contract.
+Check a named skill or runtime capability when its stage is reached. A missing dependency blocks that stage, not unrelated completed stages or all future work. Report the failed stage, preserved state, safe options, and the concrete capability needed. Resume from valid approved evidence when the capability becomes available; never imitate a missing skill's contract silently.
 
-**Complete when:** the mode is named honestly and every required dependency for the next step is available or reported as a blocker.
+**Complete when:** the next requested stage has a named available owner, or one precise capability blocker is reported without overstating its scope.
 
-## 2. Classify by requested outcome
+## 2. Classify the requested outcome
 
-Use the user's requested outcome, not isolated nouns in issue text or repository files. Select exactly one playbook with this precedence:
+Use the terminal outcome rather than isolated nouns. Select exactly one playbook with this precedence:
 
-1. **Orchestration** — coordinate multiple independently reviewable goals, tickets, worktrees, workers, or stacked pull requests.
-2. **Release** — publish, deploy, tag, distribute, or promote an already built artifact.
-3. **Review** — evaluate existing code or a diff and report findings without changing it.
-4. **Investigation** — explain, research, audit, or diagnose and report evidence without applying a fix.
-5. **Migration** — move data, schemas, dependencies, platforms, APIs, or ownership from one version or representation to another.
-6. **Bug fix** — correct observed behavior that is wrong, failing, flaky, slow, or unsafe.
-7. **Refactor** — improve code structure while preserving observable behavior.
-8. **Feature** — add or intentionally change product behavior not covered above.
+1. **Release** — land human-accepted verified pull requests or ordered increments. Publish, deploy, tag, distribute, or promote an artifact only when the user explicitly scopes that separate release action.
+2. **Orchestration** — coordinate implementation of multiple independently reviewable goals, tickets, worktrees, workers, or stacked pull requests.
+3. **Review** — evaluate existing code or a comparison and return findings without changing it.
+4. **Investigation** — explain a module, research a versioned fact, audit a repository, diagnose a symptom, or recommend an option without applying it.
+5. **Migration** — move data, schemas, dependencies, APIs, platforms, or ownership between versions or representations.
+6. **Bug fix** — correct behavior that is wrong, failing, flaky, slow, or unsafe.
+7. **Refactor** — improve structure while preserving observable behavior.
+8. **Feature** — add or intentionally change product behavior in a new or existing application.
 
-Intent controls overlap:
+Resolve overlap by the requested result:
 
-- “Why does this fail?” is an investigation; “fix this failure” is a bug fix.
-- “Review this migration” is a review; “perform this migration” is a migration.
-- “Refactor while fixing the crash” is a bug fix unless the user separates the goals.
-- A release containing many artifacts remains a release unless the request is to coordinate independent implementation goals.
-- Tests, documentation, configuration, and performance work follow the outcome they support rather than becoming extra playbooks.
+- “Why does this fail?” is investigation; “fix this failure” is bug fix.
+- “Review this migration” is review; “perform this migration” is migration.
+- “Refactor while fixing the crash” is bug fix unless the user separates the goals.
+- “Ship these approved PRs” is release even when they form an ordered stack.
+- A feature remains feature when its approved implementation has several dependent steps. Use orchestration only when the outcome is coordinating independent goals.
+- Tests, documentation, configuration, and performance work follow the outcome they support.
 
-If two outcomes remain plausible or the requested side effects are unclear, state the candidate playbooks and ask one question that distinguishes them. Do not select a route, inspect beyond what is needed to clarify, or mutate anything until the answer resolves the ambiguity.
+When two outcomes or side effects remain plausible, name the candidates and ask one question whose answer selects between them. Hold the route and all mutation until the answer arrives.
 
-**Complete when:** one outcome is supported by explicit request evidence, or one bounded clarification is pending.
+**Complete when:** explicit request evidence supports one outcome, or one bounded clarification is pending.
 
 ## 3. Announce and load one playbook
 
-Before proceeding, say:
+Report:
 
 ```text
 Selected playbook: <name> — <read-only|mutating>
-Evidence: <the request language that determined the route>
-Mode: <durable|plain-skills>
+Evidence: <request language that selected it>
+Mode: <durable|plain-skills, with relevant unavailable capability>
 ```
 
-Then read exactly the selected file:
+Then read exactly one playbook:
 
-| Playbook                                    | Side-effect class | Read when                                                                      |
-| ------------------------------------------- | ----------------- | ------------------------------------------------------------------------------ |
-| [Feature](playbooks/feature.md)             | Mutating          | The outcome adds or intentionally changes product behavior.                    |
-| [Bug fix](playbooks/bug-fix.md)             | Mutating          | The outcome corrects observed defective behavior.                              |
-| [Refactor](playbooks/refactor.md)           | Mutating          | The outcome changes structure while preserving behavior.                       |
-| [Migration](playbooks/migration.md)         | Mutating          | The outcome moves a versioned dependency, data shape, API, platform, or owner. |
-| [Investigation](playbooks/investigation.md) | Read-only         | The outcome is evidence or explanation without a fix.                          |
-| [Review](playbooks/review.md)               | Read-only         | The outcome is findings on existing code or a comparison.                      |
-| [Release](playbooks/release.md)             | Mutating          | The outcome publishes, deploys, tags, distributes, or promotes an artifact.    |
-| [Orchestration](playbooks/orchestration.md) | Mutating          | The outcome coordinates multiple independent goals or workers.                 |
+| Playbook                                    | Side-effect class | Read when                                                                     |
+| ------------------------------------------- | ----------------- | ----------------------------------------------------------------------------- |
+| [Feature](playbooks/feature.md)             | Mutating          | Add or intentionally change behavior in a new or existing application.        |
+| [Bug fix](playbooks/bug-fix.md)             | Mutating          | Correct observed defective behavior.                                          |
+| [Refactor](playbooks/refactor.md)           | Mutating          | Change structure while preserving behavior.                                   |
+| [Migration](playbooks/migration.md)         | Mutating          | Move a versioned dependency, data shape, API, platform, or owner.             |
+| [Investigation](playbooks/investigation.md) | Read-only         | Produce bounded evidence, explanation, diagnosis, or recommendation.          |
+| [Review](playbooks/review.md)               | Read-only         | Produce findings on existing code or a comparison.                            |
+| [Release](playbooks/release.md)             | Mutating          | Land accepted verified PRs, or perform an explicitly scoped artifact release. |
+| [Orchestration](playbooks/orchestration.md) | Mutating          | Coordinate implementation of multiple independent goals.                      |
 
-A read-only route has no mutation grant. A mutating route has no implementation grant: it must enter the exact `/spec` lifecycle first.
+**Complete when:** one route, its evidence, its mode, and its side-effect class are visible.
 
-**Complete when:** the route, evidence, mode, and side-effect class are visible and only one playbook is loaded.
+## 4. Shared mutating-work contract
 
-## 4. Enforce the mutation gate
+Every mutating playbook uses this contract. Playbooks add outcome-specific packets and proof; they do not redefine this gate.
 
-For every mutating playbook:
+### Phase A — Obtain or validate approval
 
-1. Keep application code, tests, configuration, dependencies, Git state, issues, pull requests, releases, and external systems unchanged.
-2. Require the installed `spec` skill. It is user-invoked, so present the exact `/spec <request>` handoff with the relevant source context and stop; do not claim to invoke it on the user's behalf.
-3. Let `spec` own discovery, Requirements, Technical Design, Plan, review gates, `spec.md`, `plan.md`, and `approval.md`.
-4. When a later invocation receives the completed artifacts, recompute the SHA-256 hashes of `spec.md` and `plan.md`; require them to match `approval.md`, require all three stage approvals, and require no unresolved blocker.
-5. Report the approved artifact paths and stop. A separate approved implementation workflow may consume them; Kriscard Mode does not continue into mutation in this invocation.
+If the request has no approved revision, or changes behavior, goals, task scope, pull-request grouping, dependencies, or design:
 
-An absent approval, changed artifact, hash mismatch, or unresolved blocker ends the run at the planning stage. Existing user work remains untouched.
+1. Preserve application code, tests, configuration, dependencies, Git state, issues, pull requests, releases, and external systems unchanged.
+2. Require the installed user-invoked `spec` skill. Present `/spec <request>` with the playbook's preparation packet and stop this invocation.
+3. Let `spec` own Requirements, Technical Design, Plan, review gates, and the canonical `spec.md`, `plan.md`, and `approval.md`.
 
-For read-only playbooks, remain inside the selected file's read boundary. If the user asks to apply a finding, treat that as a new mutating request and route it through `/spec` rather than continuing under the read-only route.
+If the request supplies an existing approved revision:
 
-**Complete when:** read-only work returns evidence without side effects, or mutating work stops with a current approved artifact set and no user-work mutation.
+1. Recompute the SHA-256 hashes of `spec.md` and `plan.md` and match them to `approval.md`.
+2. Require explicit approval of Requirements, Technical Design, and Plan, no unresolved blocker, and a task that covers the requested action and pull-request grouping.
+3. Treat any mismatch or scope departure as a return-to-planning gate. Preserve current work and describe the exact departure.
+
+Repeating an approved task's existing implementation, verification, acceptance, or merge step does not require a new product plan. A changed goal, behavior, design, dependency, or grouping does.
+
+**Complete when:** a current hash-matched approved task authorizes the exact next action, or `/spec` owns a bounded handoff and this invocation has stopped before mutation.
+
+### Phase B — Execute approved increments
+
+For each approved task or pull-request group:
+
+1. Name the implementation owner, available host capability, approved paths and goal, expected base, required evidence, and operator permission for the immediate side effects.
+2. Execute only that approved increment. Preserve unrelated user work and the approved grouping. Stop on any departure before making it.
+3. Record the resulting operation identity. For code increments, include the commit, pull-request identity, actual head and base SHAs, checks run, and expected evidence IDs. For an approved non-PR external action, record its reconciled receipt and applicable evidence without inventing a commit or PR.
+
+Durable mode may use only capabilities that are actually reachable. Plain-skills mode may perform explicitly authorized work manually in the current host, but must describe it as non-durable and cannot promise automatic scheduling or crash recovery. Git, pull-request, or external-system actions require their actual available owner and explicit operator permission.
+
+**Complete when:** every executed increment has its approved goal, owner, applicable PR identity and exact head/base or external-action receipt, and implementation evidence recorded, while blocked increments retain their last valid state.
+
+### Phase C — Verify the exact revision independently
+
+A fresh verifier, not the implementer, checks the approved requirement and design slice, repository rules, required checks, production risks, and real behavior where applicable. Its verdict must bind the exact PR identity, head SHA, base SHA, and expected evidence IDs. CI alone and implementer self-report are insufficient.
+
+A changed head, changed base, changed lower stack layer, missing surface, or unavailable independent verifier yields `stale` or `blocked`, never a passing claim. Re-run verification only after the exact revision is available.
+
+**Complete when:** each increment has one current independent verdict for its exact head/base and evidence set, or a precise verification blocker.
+
+### Phase D — Human acceptance and ordered landing
+
+Present the current verified increments, dependency and group order, checks, evidence, and consequences. The human chooses accept, merge, reject, pause, or return to planning.
+
+After explicit **merge permission**, select the release playbook in a later landing invocation. It may land only the named accepted PRs in dependency order. Before every merge it rechecks PR identity, expected base/head, current independent verification, required checks, and prerequisite state. It preserves unrelated work and stops on stale evidence or an unverified dependency.
+
+Never auto-merge, enable auto-merge, force-push, silently rebase or restack, publish an artifact outside explicit scope, or infer permission from approval, verification, CI, or silence.
+
+**Complete when:** the human decision is recorded and either the permitted PRs are reconciled as merged in order or landing stops with the exact unchanged blocker.
+
+## 5. Read-only contract
+
+Investigation and review may inspect only the bounded target and evidence sources. They return cited evidence, uncertainty, coverage, and limitations without changing code, tests, configuration, dependencies, Git, platform reviews, pull requests, releases, or external systems.
+
+A request to apply a finding is a new mutating outcome. Route it through the shared contract; reuse a valid existing approval when it already covers that exact task rather than demanding duplicate planning.
+
+**Complete when:** the requested answer or findings are delivered with evidence and no side effect, or a named unavailable observation blocks the answer.

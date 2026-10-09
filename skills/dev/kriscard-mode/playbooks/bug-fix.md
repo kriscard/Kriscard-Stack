@@ -1,21 +1,39 @@
 # Bug-fix playbook
 
-> **Read this when:** the selected outcome corrects behavior that is wrong, failing, flaky, slow, or unsafe.
+> **Read this when:** the outcome corrects behavior that is wrong, failing, flaky, slow, or unsafe.
 >
-> **Side-effect class:** Mutating. Diagnosis and planning only in this invocation.
+> **Side-effect class:** Mutating.
 
-## Required handoffs
+## Lead responsibility
 
-Require the general `debug`, `test`, and `spec` skills. Missing any one stops before product mutation; name the missing dependency. Use `debug` to establish the symptom, red-capable loop, and causal evidence. Use `test` to define regression evidence. Let `spec` own the staged planning contract. This playbook adds no substitute debugging or testing method.
+Own the causal claim and closure of the original symptom. Require general `debug` for diagnosis and `test` for regression-proof design when those stages are needed; require `spec` when approval is absent or scope changes. A missing owner blocks only its stage.
 
-## Procedure
+## Phase A — Diagnose and prepare approval
 
-1. Run `debug` only through causal diagnosis and a reproducible failing signal. Do not apply its fix phase in this invocation.
-2. Ask `test` for the narrowest observable regression contract and record it as planning input; do not add the test yet.
-3. Present the user-invoked `/spec` handoff with the symptom, expected behavior, reproduction, root-cause evidence or unresolved diagnosis blocker, and required regression proof, then stop.
-4. Keep product code, tests, configuration, dependencies, Git state, pull requests, and external systems unchanged.
-5. Require approved `spec.md`, `plan.md`, and `approval.md`, matching recorded hashes, and no unresolved blocker. Report their paths and stop.
+Run `debug` through a red-capable reproduction and causal diagnosis without applying its fix phase. Ask `test` for the narrowest observable regression contract without writing the test. Produce a **diagnosis packet** containing:
 
-## Stop conditions
+- observed and expected behavior, environment, and triggering input;
+- an already-run red signal or measured intermittent baseline;
+- supported causal mechanism, falsified alternatives, or a named observation blocker;
+- planned regression proof and same-surface verification;
+- affected scope and explicit non-goals.
 
-A diagnosis that cannot explain the symptom remains a blocker; do not plan a speculative fix. A requested behavior change that is not a defect returns to routing as a feature. In plain-skills mode, report that durable execution, recovery, and independent verification remain unavailable.
+Present that packet through the shared `/spec` gate when no current approval covers the fix.
+
+**Complete when:** the original symptom is reproducible and causally supported with a regression-proof plan, or diagnosis stops on a specific missing observation rather than proposing a speculative fix.
+
+## Phase B — Fix the approved defect
+
+With valid approval and explicit permission, the implementation owner first adds the approved regression proof when a stable test seam exists, confirms it fails for the original symptom, then applies the smallest approved causal fix. Keep the original loop, input, and environment comparable. Record changed paths, red-to-green evidence, broader checks, commit, PR identity, and exact base/head.
+
+A newly discovered behavior decision, broader redesign, dependency change, or PR regrouping returns to planning before that departure is made.
+
+**Complete when:** the original red loop is green under comparable conditions, required broader checks are recorded, temporary diagnostics are removed, and the PR contains only the approved fix and proof.
+
+## Phase C — Prove and hand off
+
+A fresh verifier repeats the approved proof on the exact PR head and relevant real surface. Current independent verification proceeds to human acceptance and release/landing; the fixer cannot certify or merge its own result.
+
+**Complete when:** the verifier independently closes the original symptom at the exact head and the human decision or precise blocker is recorded.
+
+**Output:** a causal fix PR with reproducible red-to-green evidence, exact verification binding, human decision, and landing status.

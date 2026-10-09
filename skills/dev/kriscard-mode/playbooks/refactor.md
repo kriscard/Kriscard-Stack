@@ -1,21 +1,39 @@
 # Refactor playbook
 
-> **Read this when:** the selected outcome improves structure while preserving observable behavior.
+> **Read this when:** the outcome improves structure while preserving observable behavior.
 >
-> **Side-effect class:** Mutating. Baseline discovery and planning only in this invocation.
+> **Side-effect class:** Mutating.
 
-## Required handoffs
+## Lead responsibility
 
-Require the general `refactor`, `test`, and `spec` skills. Missing any one stops before product mutation. Use `refactor` to name the structural target and preserved contract, `test` to define preservation evidence, and `spec` for staged approval. Reuse those skills by name rather than copying their methods.
+Own the preserved contract and the measurable structural improvement. Require general `refactor` for the target and contract, `test` for preservation evidence, and `spec` only when approval is absent or scope changes.
 
-## Procedure
+## Phase A — Pin behavior and prepare approval
 
-1. Ask `refactor` to identify one structural target, affected callers, and the observable contract that must stay stable; stop before its change step.
-2. Ask `test` to identify existing checks or a characterization boundary; record gaps without writing tests.
-3. Present the user-invoked `/spec` handoff with the target, preserved contract, affected scope, baseline evidence, and explicit exclusions, then stop.
-4. Keep product code, tests, configuration, dependencies, Git state, pull requests, and external systems unchanged.
-5. Require approved `spec.md`, `plan.md`, and `approval.md`, matching recorded hashes, and no unresolved blocker. Report their paths and stop.
+Use `refactor` to identify one structural target, relevant callers, current public behavior, and intended shape. Use `test` to locate existing proof and define any missing characterization check without writing it. Produce a **refactor packet** containing:
 
-## Stop conditions
+- the structural problem and affected ownership boundary;
+- observable APIs, outputs, side effects, errors, ordering, and performance invariants to preserve;
+- immediate callers and consumers;
+- baseline checks, coverage gaps, and planned equivalence evidence;
+- a concrete before/after measure such as fewer branches, narrower ownership, or less duplication.
 
-A discovered defect routes as a bug fix; an intentional contract change routes as a feature; a dependency or data-version move routes as a migration. In plain-skills mode, do not promise durable continuation or independent verification.
+Present the packet through the shared `/spec` gate when needed.
+
+**Complete when:** the preserved contract and target improvement are independently checkable and every affected caller is accounted for, or an ambiguity blocks approval.
+
+## Phase B — Perform the approved refactor
+
+With valid approval and explicit permission, the implementation owner adds an approved characterization test first when evidence is missing, then makes one coherent structural change. Keep public behavior, dependencies, and boundaries stable. Record baseline and after checks, the measured improvement, commit, PR identity, and exact base/head.
+
+A discovered bug, API change, dependency change, or architectural decision leaves this scope and returns to planning.
+
+**Complete when:** preservation checks match the baseline, the named structural measure improves, and the PR contains no unrelated behavioral change.
+
+## Phase C — Prove and hand off
+
+A fresh verifier checks contract equivalence and the claimed structural improvement at the exact PR head. Current proof proceeds to human acceptance and release/landing; the refactor implementer does not self-certify or merge.
+
+**Complete when:** exact-head independent evidence confirms both preservation and the named improvement, and the human decision or precise blocker is recorded.
+
+**Output:** a behavior-preserving refactor PR with baseline/equivalence evidence, measured improvement, exact verification binding, human decision, and landing status.

@@ -1,21 +1,46 @@
 # Feature playbook
 
-> **Read this when:** the selected outcome adds or intentionally changes product behavior.
+> **Read this when:** the outcome adds or intentionally changes behavior in a new or existing application.
 >
-> **Side-effect class:** Mutating. Planning only in this invocation.
+> **Side-effect class:** Mutating.
 
-## Required handoff
+## Lead responsibility
 
-Require the general `spec` skill. Missing `spec` stops the planning stage before any mutation. Let `spec` route matching architecture, framework, research, and test skills from repository evidence; do not preload or reproduce their guidance here.
+Own the feature outcome from a scoped user need through approved increments. Let `spec` own product decisions and decomposition; load other general skills only when repository evidence triggers them.
 
-## Procedure
+## Phase A — Prepare approval
 
-1. Restate the new observable behavior, affected users, and explicit exclusions from the request.
-2. Present the user-invoked `/spec` handoff with the request, repository context, and those boundaries, then stop.
-3. Leave product code, tests, configuration, dependencies, Git state, pull requests, and external systems unchanged while the separate `/spec` invocation completes its staged reviews.
-4. Require approved `spec.md`, `plan.md`, and `approval.md`, matching recorded hashes, and no unresolved blocker.
-5. Report the artifact paths and stop. Implementation is a separate approved workflow.
+When no valid approval covers the feature, produce a **feature packet** containing:
 
-## Stop conditions
+- actor, current situation, and intended observable outcome;
+- acceptance examples and real product surface where they can be observed;
+- affected subsystem or new-application boundary;
+- explicit exclusions, compatibility needs, and unresolved product decisions;
+- candidate increments only as planning input, without silently fixing their grouping.
 
-Stop before planning if the desired behavior cannot be distinguished from a bug fix or migration. Stop after planning if approval is absent or stale. In plain-skills mode, describe durable execution and independent verification as unavailable rather than implying that the current session supplies them.
+Present the packet through the router's shared `/spec` gate. Before that approval, the packet is the only output; product code, tests, Git, and external systems remain unchanged.
+
+**Complete when:** every requested behavior has observable acceptance, boundaries and unknowns are explicit, and `/spec` has either received the packet or returned a named blocker.
+
+## Phase B — Deliver approved increments
+
+With a valid approved revision and explicit permission, take each approved feature task in its recorded group and order. The implementation owner writes the behavior and its tests on the assigned branch or worktree using only actually available capabilities. A feature with several dependent steps remains one feature workflow unless the approved outcome coordinates independent goals.
+
+For each increment, record:
+
+- approved task and acceptance IDs;
+- changed surface and exclusions preserved;
+- test and real-surface evidence produced by the implementation owner;
+- commit, PR identity, expected and actual base/head, and remaining dependencies.
+
+Stop and return to planning if implementation requires a new behavior, design, dependency, or PR grouping.
+
+**Complete when:** every in-scope increment is implemented in its approved group with reproducible acceptance evidence, or its exact capability or scope blocker is recorded.
+
+## Phase C — Prove and hand off
+
+Hand each exact PR head to a fresh verifier under the shared contract. After current independent verification, present the increment for human acceptance and release/landing. The implementer does not certify readiness or merge it.
+
+**Complete when:** every delivered increment has a current exact-head verdict and recorded human decision, or its verification or landing blocker is explicit.
+
+**Output:** approved feature increments with PR identities, exact verification bindings, human decisions, and ordered landing status.
