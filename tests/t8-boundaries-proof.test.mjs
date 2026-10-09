@@ -5,6 +5,12 @@ import { describe, expect, it } from "vitest";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
+/**
+ * @typedef {{ activation: string, evidence: string, decision: string }} EvaluationCase
+ * @typedef {{ name: string, descriptionEvidence: string[], cases: Record<string, EvaluationCase> }} ExpectedPrinciple
+ */
+
+/** @type {ExpectedPrinciple[]} */
 const expectedPrinciples = [
   {
     name: "principle-boundary-discipline",
@@ -70,10 +76,12 @@ const requiredSections = [
   "## Evaluation cases",
 ];
 
+/** @param {string} value */
 function normalized(value) {
   return value.replaceAll(/\s+/g, " ").trim();
 }
 
+/** @param {string} contents */
 function parseFrontmatter(contents) {
   const match = contents.match(/^---\n([\s\S]*?)\n---\n/);
   if (!match) throw new Error("Missing YAML frontmatter");
@@ -88,6 +96,10 @@ function parseFrontmatter(contents) {
   return { name, description: normalized(description) };
 }
 
+/**
+ * @param {string} contents
+ * @returns {Record<string, EvaluationCase>}
+ */
 function parseEvaluationCases(contents) {
   const section = contents.split("## Evaluation cases\n")[1];
   if (!section) throw new Error("Missing evaluation cases section");
