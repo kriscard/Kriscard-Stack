@@ -343,6 +343,27 @@ test("supporting files persist across restart and finalize without unsafe paths"
     await runtime.close();
   });
 
+  for (const canonicalFile of ["spec.md", "plan.md", "approval.md"]) {
+    await assert.rejects(
+      api.client.submitPlanning({
+        key: `canonical-supporting-file-${canonicalFile}`,
+        operation: "start",
+        expectedVersion: await currentVersion(api.client),
+        revisionId: identity.revisionId,
+        context: identity.context,
+        sourceDirectory: source,
+        supportingFiles: [canonicalFile],
+      }),
+      (error) =>
+        error instanceof ControlPlaneApiError &&
+        error.code === "INVALID_SUPPORTING_FILE",
+    );
+  }
+  assert.equal(
+    (await api.client.planningState()).runs[identity.revisionId],
+    undefined,
+  );
+
   await assert.rejects(
     api.client.submitPlanning({
       key: "unsafe-supporting-file",
@@ -535,6 +556,22 @@ for (const [fixture, mutate] of [
     "malformed lifecycle metadata",
     (approval: string) =>
       approval.replace(/\n## Stage approvals\n[\s\S]*?(?=\n## Exceptions)/, ""),
+  ],
+  [
+    "not-approved stage decision",
+    (approval: string) =>
+      approval.replace(
+        "- Plan: Plannotator decision plan-approved",
+        "- Plan: Plannotator decision not approved",
+      ),
+  ],
+  [
+    "approval-denied stage decision",
+    (approval: string) =>
+      approval.replace(
+        "- Technical Design: Plannotator decision design-approved",
+        "- Technical Design: Plannotator decision approval denied",
+      ),
   ],
 ] as const) {
   test(`finalization rejects ${fixture} even when artifact hashes match`, async (t) => {

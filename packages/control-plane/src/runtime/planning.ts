@@ -31,6 +31,7 @@ import {
 
 const SHA256 = /^[0-9a-f]{64}$/;
 const REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
+const CANONICAL_PLANNING_FILES = new Set(["spec.md", "plan.md", "approval.md"]);
 const PlanningStageSchema = z.enum(["requirements", "design", "plan"]);
 const PlanningArtifactContextSchema = ArtifactContextSchema.catchall(z.json());
 const PlanningGateReceiptSchema = z.object({
@@ -756,6 +757,12 @@ async function validateSupportingFiles(
     for (const supportingFile of supportingFiles) {
       const safePath = assertSafeRelativePath(supportingFile);
       const key = portablePathKey(safePath);
+      if (CANONICAL_PLANNING_FILES.has(key)) {
+        throw new PlanningCommandError(
+          "INVALID_SUPPORTING_FILE",
+          `Supporting file collides with a canonical planning artifact: ${safePath}`,
+        );
+      }
       if (keys.has(key)) {
         throw new PlanningCommandError(
           "INVALID_SUPPORTING_FILE",

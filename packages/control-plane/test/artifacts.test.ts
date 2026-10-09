@@ -517,6 +517,22 @@ test("rejects incomplete, conflicting, or rejected approval lifecycle metadata",
         ),
     ],
     [
+      "requirements not approved",
+      (approval) =>
+        approval.replace(
+          "- Requirements: Plannotator decision requirements-approved",
+          "- Requirements: Plannotator decision not approved",
+        ),
+    ],
+    [
+      "design approval denied",
+      (approval) =>
+        approval.replace(
+          "- Technical Design: Plannotator decision design-approved",
+          "- Technical Design: Plannotator decision approval denied",
+        ),
+    ],
+    [
       "missing exceptions",
       (approval) => approval.replace(/\n## Exceptions\n\nNone\.\n$/, "\n"),
     ],
