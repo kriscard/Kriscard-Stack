@@ -15,6 +15,7 @@ import {
   canonicalizePotentialPath,
   defaultArtifactRoot,
 } from "../artifacts/paths.js";
+import { createArtifactStore } from "../artifacts/index.js";
 import {
   Commands,
   createCommandTask,
@@ -27,6 +28,16 @@ import {
   type CommandRequest,
 } from "./commands.js";
 import { acquireOwnerLock } from "./ownership.js";
+import {
+  PlanningRuns,
+  createPlanningFinalizeTask,
+  recoverInterruptedPlanningReviews,
+  submitPlanningCommand,
+  type PlanningCommandRequest,
+  type PlanningEvent,
+  type PlanningLedger,
+  type PlanningRun,
+} from "./planning.js";
 
 let activeRuntime = false;
 // Retain the lock descriptor if a failed SQLite close leaves writer state uncertain.
@@ -46,6 +57,17 @@ export interface OpenControlPlane {
   eventsAfter(
     position: number,
   ): Promise<{ version: number; events: CommandEvent[] }>;
+  submitPlanning(
+    input: PlanningCommandRequest,
+  ): Promise<{ version: number; taskId?: number }>;
+  planningRun(revisionId: string): Promise<Readonly<PlanningRun> | undefined>;
+  planningState(): Promise<{
+    version: number;
+    runs: Record<string, PlanningRun>;
+  }>;
+  planningEventsAfter(
+    position: number,
+  ): Promise<{ version: number; events: PlanningEvent[] }>;
   close(): Promise<void>;
 }
 
@@ -55,6 +77,7 @@ export async function openControlPlane(
   dataRoot: string = defaultArtifactRoot(),
   context: Context = BACKGROUND_CONTEXT,
   commandAdapter?: CommandAdapter,
+  options: { artifactStore?: ReturnType<typeof createArtifactStore> } = {},
 ): Promise<OpenControlPlane> {
   const root = canonicalizePotentialPath(dataRoot);
   if (activeRuntime) {
@@ -88,6 +111,10 @@ export async function openControlPlane(
     if (commandTask) {
       registry.install({ name: "kriscard.commands", tasks: [commandTask] });
     }
+    const planningTask = createPlanningFinalizeTask(
+      options.artifactStore ?? createArtifactStore({ root }),
+    );
+    registry.install({ name: "kriscard.planning", tasks: [planningTask] });
     const openedHarness = await Harness.open(
       storage,
       { models: createModels(), registry },
@@ -107,8 +134,9 @@ export async function openControlPlane(
           );
         }
       }
-      openedHarness.resume();
     }
+    await recoverInterruptedPlanningReviews(openedHarness, context);
+    openedHarness.resume();
     let closed = false;
 
     return {
@@ -162,26 +190,52 @@ export async function openControlPlane(
         };
       },
       async eventsAfter(position) {
-        if (!Number.isSafeInteger(position) || position < 0)
-          throw new RangeError("Event position must be a nonnegative integer");
         const ledger: CommandLedger | undefined = await openedHarness.snapshot(
           Commands,
           BACKGROUND_CONTEXT,
         );
-        const version = ledger?.version ?? 0;
-        if (position > version)
-          throw new RangeError("Event position exceeds the current version");
-        const events = ledger?.events ?? [];
-        if (events.length > 0 && position < events[0]!.position - 1)
-          throw new ExpiredEventPositionError(
-            `Event position ${position} has expired (oldest ${events[0]!.position}, version ${version}); fetch a fresh state snapshot`,
-          );
+        return eventsAfter(
+          position,
+          ledger?.version ?? 0,
+          ledger?.events ?? [],
+        );
+      },
+      async submitPlanning(input) {
+        return submitPlanningCommand(
+          openedHarness,
+          planningTask,
+          input,
+          context,
+        );
+      },
+      async planningRun(revisionId) {
+        const ledger = await openedHarness.snapshot(
+          PlanningRuns,
+          BACKGROUND_CONTEXT,
+        );
+        const run = ledger?.runs[revisionId];
+        return run ? structuredClone(run) : undefined;
+      },
+      async planningState() {
+        const ledger = await openedHarness.snapshot(
+          PlanningRuns,
+          BACKGROUND_CONTEXT,
+        );
         return {
-          version,
-          events: structuredClone(
-            events.filter((event) => event.position > position),
-          ),
+          version: ledger?.version ?? 0,
+          runs: structuredClone(ledger?.runs ?? {}),
         };
+      },
+      async planningEventsAfter(position) {
+        const ledger: PlanningLedger | undefined = await openedHarness.snapshot(
+          PlanningRuns,
+          BACKGROUND_CONTEXT,
+        );
+        return eventsAfter(
+          position,
+          ledger?.version ?? 0,
+          ledger?.events ?? [],
+        );
       },
       async close(): Promise<void> {
         if (closed) return;
@@ -214,6 +268,27 @@ export async function openControlPlane(
     activeRuntime = false;
     throw error;
   }
+}
+
+function eventsAfter<Event extends { position: number }>(
+  position: number,
+  version: number,
+  events: readonly Event[],
+): { version: number; events: Event[] } {
+  if (!Number.isSafeInteger(position) || position < 0)
+    throw new RangeError("Event position must be a nonnegative integer");
+  if (position > version)
+    throw new RangeError("Event position exceeds the current version");
+  if (events.length > 0 && position < events[0]!.position - 1)
+    throw new ExpiredEventPositionError(
+      `Event position ${position} has expired (oldest ${events[0]!.position}, version ${version}); fetch a fresh state snapshot`,
+    );
+  return {
+    version,
+    events: structuredClone(
+      events.filter((event) => event.position > position),
+    ),
+  };
 }
 
 async function assertPrivateDatabaseFiles(databasePath: string): Promise<void> {

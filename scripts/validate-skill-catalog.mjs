@@ -17,6 +17,8 @@ const modePlaybooks = new Map([
   ["orchestration", "Mutating"],
 ]);
 
+const temporarySpecSkillPath = "skills/dev/spec/SKILL.md";
+
 /** @typedef {{ name: string, path: string }} Skill */
 /** @typedef {{ name: string, paths: string[] }} DuplicateSkill */
 
@@ -90,6 +92,66 @@ export function duplicateSkills(...catalogs) {
   return [...owners]
     .filter(([, paths]) => paths.length > 1)
     .map(([name, paths]) => ({ name, paths }));
+}
+
+/**
+ * @param {string} left
+ * @param {string} right
+ * @returns {Promise<boolean>}
+ */
+async function directoriesMatch(left, right) {
+  const [leftEntries, rightEntries] = await Promise.all([
+    readdir(left, { withFileTypes: true }),
+    readdir(right, { withFileTypes: true }),
+  ]);
+  /** @param {import("node:fs").Dirent} entry */
+  const entryKey = (entry) =>
+    `${entry.isDirectory() ? "directory" : entry.isFile() ? "file" : "other"}:${entry.name}`;
+  const leftKeys = leftEntries.map(entryKey).sort();
+  const rightKeys = rightEntries.map(entryKey).sort();
+  if (JSON.stringify(leftKeys) !== JSON.stringify(rightKeys)) return false;
+
+  for (const entry of leftEntries) {
+    if (!entry.isDirectory() && !entry.isFile()) return false;
+    const leftPath = resolve(left, entry.name);
+    const rightPath = resolve(right, entry.name);
+    if (entry.isDirectory()) {
+      if (!(await directoriesMatch(leftPath, rightPath))) return false;
+    } else {
+      const [leftContents, rightContents] = await Promise.all([
+        readFile(leftPath),
+        readFile(rightPath),
+      ]);
+      if (!leftContents.equals(rightContents)) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * T9's approved, unreleased ownership exception applies only to an exact copy
+ * of the pinned spec skill while this package cannot be published.
+ *
+ * @param {{ duplicates: DuplicateSkill[], stackRoot: string, generalRoot: string, packagePrivate: boolean }} input
+ * @returns {Promise<Set<string>>}
+ */
+export async function approvedTemporaryDuplicateNames(input) {
+  if (!input.packagePrivate) return new Set();
+
+  const specDuplicate = input.duplicates.find(
+    ({ name, paths }) =>
+      name === "spec" &&
+      paths.length === 2 &&
+      paths.every((path) => path === temporarySpecSkillPath),
+  );
+  if (!specDuplicate) return new Set();
+
+  const relativeSpecRoot = "skills/dev/spec";
+  const matches = await directoriesMatch(
+    resolve(input.stackRoot, relativeSpecRoot),
+    resolve(input.generalRoot, relativeSpecRoot),
+  );
+  return matches ? new Set([specDuplicate.name]) : new Set();
 }
 
 /** @param {string} destination */
@@ -168,9 +230,12 @@ export async function validateModePlaybooks(repositoryRoot) {
 }
 
 async function main() {
-  const manifest = JSON.parse(
-    await readFile(resolve(root, "config/skills-source.json"), "utf8"),
-  );
+  const [manifest, packageManifest] = await Promise.all([
+    readFile(resolve(root, "config/skills-source.json"), "utf8").then(
+      JSON.parse,
+    ),
+    readFile(resolve(root, "package.json"), "utf8").then(JSON.parse),
+  ]);
   const generalRoot = resolve(
     process.env.KRISCARD_SKILLS_REPO ?? resolve(root, "../Skills"),
   );
@@ -191,6 +256,15 @@ async function main() {
   const stackSkills = await collectSkills(root);
   const generalSkills = await collectSkills(generalRoot);
   const duplicates = duplicateSkills(stackSkills, generalSkills);
+  const approvedTemporaryDuplicates = await approvedTemporaryDuplicateNames({
+    duplicates,
+    stackRoot: root,
+    generalRoot,
+    packagePrivate: packageManifest.private === true,
+  });
+  const unapprovedDuplicates = duplicates.filter(
+    ({ name }) => !approvedTemporaryDuplicates.has(name),
+  );
 
   console.log(`Stack skills (${stackSkills.length}):`);
   console.log(
@@ -201,15 +275,20 @@ async function main() {
     generalSkills.map(({ name }) => `- ${name}`).join("\n") || "- none",
   );
 
-  if (duplicates.length > 0) {
-    const details = duplicates
+  if (unapprovedDuplicates.length > 0) {
+    const details = unapprovedDuplicates
       .map(({ name, paths }) => `${name}: ${paths.join(", ")}`)
       .join("\n");
     throw new Error(`Duplicate skill names found:\n${details}`);
   }
 
+  if (approvedTemporaryDuplicates.size > 0) {
+    console.log(
+      `Approved temporary unreleased duplicate: ${[...approvedTemporaryDuplicates].join(", ")}`,
+    );
+  }
   console.log(
-    `Catalogs are compatible (${stackSkills.length + generalSkills.length} unique skills)`,
+    `Catalogs validated (${stackSkills.length + generalSkills.length - duplicates.length} unique skill names)`,
   );
 }
 

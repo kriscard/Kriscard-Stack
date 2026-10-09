@@ -2,3 +2,11 @@ node_modules
 dist
 coverage
 pnpm-lock.yaml
+
+# T9's temporary unreleased /spec copy must remain byte-identical to its pinned source.
+skills/dev/spec/SKILL.md
+skills/dev/spec/references/approval-stage.md
+skills/dev/spec/references/design-stage.md
+skills/dev/spec/references/planning-stage.md
+skills/dev/spec/references/requirements-stage.md
+skills/dev/spec/references/source-and-discovery.md

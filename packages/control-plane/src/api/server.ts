@@ -10,6 +10,13 @@ import {
   ExpiredEventPositionError,
   type OpenControlPlane,
 } from "../runtime/open.js";
+import {
+  PlanningCommandError,
+  PlanningCommandRequestSchema,
+  StalePlanningVersionError,
+  type PlanningCommandRequest,
+} from "../runtime/planning.js";
+import * as z from "zod";
 import { API_VERSION } from "./protocol.js";
 const MAX_BODY_BYTES = 16 * 1024;
 const DEVICE_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -115,6 +122,13 @@ function commandRequest(value: unknown): {
   };
 }
 
+function planningCommandRequest(value: unknown): PlanningCommandRequest {
+  const parsed = PlanningCommandRequestSchema.safeParse(value);
+  if (!parsed.success)
+    throw new ApiError(400, "INVALID_COMMAND", "Invalid planning command body");
+  return parsed.data;
+}
+
 async function writeFrame(
   response: ServerResponse,
   frame: string | Buffer,
@@ -161,8 +175,18 @@ export async function startApiServer(options: ApiServerOptions): Promise<{
           error: error.code,
           message: error.message,
         });
-      else if (error instanceof StaleCommandVersionError)
+      else if (
+        error instanceof StaleCommandVersionError ||
+        error instanceof StalePlanningVersionError
+      )
         sendJson(response, 409, { error: "STALE_VERSION" });
+      else if (error instanceof PlanningCommandError)
+        sendJson(response, error.code === "KEY_CONFLICT" ? 409 : 422, {
+          error: error.code,
+          message: error.message,
+        });
+      else if (error instanceof z.ZodError)
+        sendJson(response, 400, { error: "INVALID_COMMAND" });
       else if (error instanceof ExpiredEventPositionError)
         sendJson(response, 410, { error: "EXPIRED_POSITION" });
       else if (error instanceof RangeError)
@@ -238,47 +262,35 @@ export async function startApiServer(options: ApiServerOptions): Promise<{
       return;
     }
     if (request.method === "GET" && url.pathname === "/v1/events") {
-      const lastId = request.headers["last-event-id"];
-      if (lastId !== undefined && typeof lastId !== "string")
-        throw new ApiError(400, "INVALID_POSITION", "Invalid event position");
-      const cursor = position(lastId ?? url.searchParams.get("after") ?? "0");
-      const initial = await options.runtime.eventsAfter(cursor);
-      response.writeHead(200, {
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-store",
-        Connection: "keep-alive",
-        "X-Kriscard-Api-Version": String(API_VERSION),
-      });
-      let current = cursor;
-      let closed = false;
-      response.on("close", () => {
-        closed = true;
-      });
-      let page = initial;
-      while (!closed) {
-        for (const event of page.events) {
-          await writeFrame(
-            response,
-            `id: ${event.position}\nevent: command\ndata: ${JSON.stringify(event)}\n\n`,
-          );
-          current = event.position;
-          if (closed) break;
-        }
-        if (closed) break;
-        await new Promise<void>((resolve) => setTimeout(resolve, 100));
-        if (closed) break;
-        try {
-          page = await options.runtime.eventsAfter(current);
-        } catch (error) {
-          if (!(error instanceof ExpiredEventPositionError)) throw error;
-          await writeFrame(
-            response,
-            'event: reset\ndata: {"reason":"EXPIRED_POSITION"}\n\n',
-          );
-          break;
-        }
-      }
-      if (!response.writableEnded) response.end();
+      await streamEvents(request, response, "command", (cursor) =>
+        options.runtime.eventsAfter(cursor),
+      );
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/v1/planning/state") {
+      sendJson(response, 200, await options.runtime.planningState());
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/v1/planning/runs") {
+      const revisionId = url.searchParams.get("revisionId");
+      if (!revisionId)
+        throw new ApiError(400, "INVALID_REVISION_ID", "Missing revision ID");
+      const run = await options.runtime.planningRun(revisionId);
+      if (!run) throw new ApiError(404, "NOT_FOUND", "Unknown planning run");
+      sendJson(response, 200, run);
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/v1/planning/commands") {
+      const result = await options.runtime.submitPlanning(
+        planningCommandRequest(await readJson(request)),
+      );
+      sendJson(response, 202, result);
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/v1/planning/events") {
+      await streamEvents(request, response, "planning", (cursor) =>
+        options.runtime.planningEventsAfter(cursor),
+      );
       return;
     }
     if (request.method === "GET" && url.pathname.startsWith("/v1/artifacts/")) {
@@ -300,6 +312,57 @@ export async function startApiServer(options: ApiServerOptions): Promise<{
       return;
     }
     throw new ApiError(404, "NOT_FOUND", "Unknown API route");
+  }
+
+  async function streamEvents<Event extends { position: number }>(
+    request: IncomingMessage,
+    response: ServerResponse,
+    eventType: string,
+    eventsAfter: (
+      cursor: number,
+    ) => Promise<{ version: number; events: Event[] }>,
+  ): Promise<void> {
+    const lastId = request.headers["last-event-id"];
+    if (lastId !== undefined && typeof lastId !== "string")
+      throw new ApiError(400, "INVALID_POSITION", "Invalid event position");
+    const url = new URL(request.url ?? "/", `http://${displayHost}`);
+    const cursor = position(lastId ?? url.searchParams.get("after") ?? "0");
+    let page = await eventsAfter(cursor);
+    response.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-store",
+      Connection: "keep-alive",
+      "X-Kriscard-Api-Version": String(API_VERSION),
+    });
+    let current = cursor;
+    let closed = false;
+    response.on("close", () => {
+      closed = true;
+    });
+    while (!closed) {
+      for (const event of page.events) {
+        await writeFrame(
+          response,
+          `id: ${event.position}\nevent: ${eventType}\ndata: ${JSON.stringify(event)}\n\n`,
+        );
+        current = event.position;
+        if (closed) break;
+      }
+      if (closed) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      if (closed) break;
+      try {
+        page = await eventsAfter(current);
+      } catch (error) {
+        if (!(error instanceof ExpiredEventPositionError)) throw error;
+        await writeFrame(
+          response,
+          'event: reset\ndata: {"reason":"EXPIRED_POSITION"}\n\n',
+        );
+        break;
+      }
+    }
+    if (!response.writableEnded) response.end();
   }
 
   try {
