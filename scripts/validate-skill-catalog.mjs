@@ -96,8 +96,21 @@ export function duplicateSkills(...catalogs) {
 export async function validateModePlaybooks(repositoryRoot) {
   const modeRoot = resolve(repositoryRoot, "skills/dev/kriscard-mode");
   const router = await readFile(resolve(modeRoot, "SKILL.md"), "utf8");
-  const links = [...router.matchAll(/\]\(playbooks\/([a-z-]+)\.md\)/g)].map(
-    ([, name]) => name,
+  const destinations = [...router.matchAll(/\]\(([^)\r\n]+)\)/g)]
+    .map(([, destination]) => destination.trim())
+    .filter((destination) => destination.includes("playbooks"));
+  const invalidDestinations = destinations.filter((destination) => {
+    const match = destination.match(/^playbooks\/([a-z-]+)\.md$/);
+    return !match || !modePlaybooks.has(match[1]);
+  });
+  if (invalidDestinations.length > 0) {
+    throw new Error(
+      `Invalid mode playbook destinations: ${invalidDestinations.join(", ")}`,
+    );
+  }
+
+  const links = destinations.map((destination) =>
+    destination.slice("playbooks/".length, -".md".length),
   );
   const duplicateLinks = links.filter(
     (name, index) => links.indexOf(name) !== index,
