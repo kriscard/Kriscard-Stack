@@ -1,6 +1,4 @@
 import { createHash } from "node:crypto";
-import { lstat } from "node:fs/promises";
-import path from "node:path";
 
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -197,7 +195,7 @@ type FinalizePhase =
   | { phase: "retire"; started: boolean };
 type FinalizeResult = { migrationId: string };
 
-/** Finalization copies first and records retirement intent before deleting a validated source. */
+/** Finalization imports idempotently while source retirement remains deferred to T23. */
 export function createPlanningFinalizeTask(artifactStore: ArtifactStore) {
   return defineTask<FinalizeInput, FinalizePhase, FinalizeResult>({
     name: "kriscard.planning.finalize",
@@ -205,7 +203,10 @@ export function createPlanningFinalizeTask(artifactStore: ArtifactStore) {
     initial: () => ({ phase: "import", started: false }),
     phases: {
       import: async (task, runtime, context) => {
-        let request: Parameters<ArtifactStore["importApprovedRevision"]>[0];
+        let request:
+          | Parameters<ArtifactStore["importApprovedRevision"]>[0]
+          | undefined;
+        let hasDeferredRetirementIntent = false;
         await runtime.commit(async (tx) => {
           const ledger = await tx.doc(PlanningRuns);
           const run = ledger.runs[task.input.revisionId];
@@ -219,29 +220,44 @@ export function createPlanningFinalizeTask(artifactStore: ArtifactStore) {
               "Planning finalization does not match its durable run",
             );
           }
-          const design = run.gates.design.receipt;
-          const plan = run.gates.plan.receipt;
-          if (!design || !plan)
-            throw new Error("Planning finalization is missing approved gates");
-          request = {
-            context: PlanningArtifactContextSchema.parse(run.context),
-            revisionId: run.revisionId,
-            sourceDirectory: run.sourceDirectory,
-            supportingFiles: [...run.supportingFiles],
-            sourceDisposition: run.sourceDisposition ?? "preserve",
-            migrationId: run.migrationId,
-            expectedHashes: { spec: design.sha256, plan: plan.sha256 },
-          };
+          hasDeferredRetirementIntent = run.sourceDisposition === "retire";
+          if (!hasDeferredRetirementIntent) {
+            const design = run.gates.design.receipt;
+            const plan = run.gates.plan.receipt;
+            if (!design || !plan)
+              throw new Error(
+                "Planning finalization is missing approved gates",
+              );
+            request = {
+              context: PlanningArtifactContextSchema.parse(run.context),
+              revisionId: run.revisionId,
+              sourceDirectory: run.sourceDirectory,
+              supportingFiles: [...run.supportingFiles],
+              sourceDisposition: "preserve",
+              migrationId: run.migrationId,
+              expectedHashes: { spec: design.sha256, plan: plan.sha256 },
+            };
+          }
           return {
             status: "running",
             checkpoint: { phase: "import", started: true },
           };
         }, context);
 
+        if (hasDeferredRetirementIntent) {
+          await blockFinalization(
+            task.input.revisionId,
+            new PlanningCommandError(
+              "SOURCE_RETIREMENT_RECONCILIATION_REQUIRED",
+              "Planning source retirement is deferred to the approved T23 ownership migration",
+            ),
+            runtime,
+            context,
+          );
+          return;
+        }
+
         try {
-          if (request!.sourceDisposition === "retire") {
-            await assertRetirablePlanningSource(request!.sourceDirectory);
-          }
           let stored: StoredBundle;
           try {
             stored = await artifactStore.resumeMigration(
@@ -257,60 +273,6 @@ export function createPlanningFinalizeTask(artifactStore: ArtifactStore) {
             stored = await artifactStore.importApprovedRevision(request!);
           }
           assertStoredRevisionMatchesRequest(stored, request!);
-          if (request!.sourceDisposition === "retire") {
-            await runtime.commit(
-              () => ({
-                status: "running",
-                checkpoint: { phase: "retire", started: false },
-              }),
-              context,
-            );
-          } else {
-            await completeFinalization(
-              task.input.revisionId,
-              stored,
-              runtime,
-              context,
-            );
-          }
-        } catch (error) {
-          if (runtime.signal.aborted) throw error;
-          await blockFinalization(
-            task.input.revisionId,
-            error,
-            runtime,
-            context,
-          );
-        }
-      },
-      retire: async (task, runtime, context) => {
-        let sourceDirectory: string | undefined;
-        await runtime.commit(async (tx) => {
-          const ledger = await tx.doc(PlanningRuns);
-          const run = ledger.runs[task.input.revisionId];
-          if (
-            !run ||
-            run.status !== "finalizing" ||
-            run.finalizeTaskId !== runtime.taskId ||
-            run.migrationId !== task.input.migrationId ||
-            run.sourceDisposition !== "retire"
-          ) {
-            throw new Error(
-              "Planning source retirement does not match its durable run",
-            );
-          }
-          sourceDirectory = run.sourceDirectory;
-          return {
-            status: "running",
-            checkpoint: { phase: "retire", started: true },
-          };
-        }, context);
-
-        try {
-          await assertRetirablePlanningSource(sourceDirectory!);
-          const stored = await artifactStore.retireMigrationSource(
-            task.input.migrationId,
-          );
           await completeFinalization(
             task.input.revisionId,
             stored,
@@ -326,6 +288,17 @@ export function createPlanningFinalizeTask(artifactStore: ArtifactStore) {
             context,
           );
         }
+      },
+      retire: async (task, runtime, context) => {
+        await blockFinalization(
+          task.input.revisionId,
+          new PlanningCommandError(
+            "SOURCE_RETIREMENT_RECONCILIATION_REQUIRED",
+            "Persisted planning source retirement requires manual reconciliation before T23",
+          ),
+          runtime,
+          context,
+        );
       },
     },
     abort: async (task, runtime, context) => {
@@ -425,7 +398,12 @@ async function blockFinalization(
     run.status = "blocked";
     run.currentStage = "approval";
     run.error = {
-      code: isArtifactStoreError(error) ? error.code : "FINALIZATION_FAILED",
+      code:
+        error instanceof PlanningCommandError
+          ? error.code
+          : isArtifactStoreError(error)
+            ? error.code
+            : "FINALIZATION_FAILED",
       message:
         error instanceof Error
           ? error.message
@@ -447,6 +425,12 @@ export async function submitPlanningCommand(
 ): Promise<{ version: number; taskId?: number }> {
   input = PlanningCommandRequestSchema.parse(input);
   validateCommon(input);
+  if (input.operation === "start" && input.sourceDisposition === "retire") {
+    throw new PlanningCommandError(
+      "SOURCE_RETIREMENT_DEFERRED",
+      "Planning source retirement is unavailable until the approved T23 ownership migration",
+    );
+  }
   const revisionId = input.revisionId;
   const root = await harness.root(context);
   const initialLedger = await harness.snapshot(PlanningRuns, context);
@@ -463,13 +447,8 @@ export async function submitPlanningCommand(
 
   let startSourceDirectory: string | undefined;
   let startSupportingFiles: string[] | undefined;
-  let startSourceDisposition: "preserve" | "retire" | undefined;
   if (input.operation === "start") {
     startSourceDirectory = canonicalizePotentialPath(input.sourceDirectory);
-    startSourceDisposition = input.sourceDisposition ?? "preserve";
-    if (startSourceDisposition === "retire") {
-      await assertRetirablePlanningSource(startSourceDirectory);
-    }
     startSupportingFiles = await validateSupportingFiles(
       startSourceDirectory,
       input.supportingFiles ?? [],
@@ -519,7 +498,7 @@ export async function submitPlanningCommand(
         context: PlanningArtifactContextSchema.parse(input.context),
         sourceDirectory: startSourceDirectory!,
         supportingFiles: startSupportingFiles!,
-        sourceDisposition: startSourceDisposition!,
+        sourceDisposition: "preserve",
         migrationId: migrationIdFor(revisionId),
         status: "planning",
         currentStage: "requirements",
@@ -842,36 +821,6 @@ function commandIdentity(input: PlanningCommandRequest): string {
         operation: input.operation,
         revisionId: input.revisionId,
       });
-  }
-}
-
-async function assertRetirablePlanningSource(
-  sourceDirectory: string,
-): Promise<void> {
-  const slug = path.basename(sourceDirectory);
-  const specsDirectory = path.dirname(sourceDirectory);
-  const docsDirectory = path.dirname(specsDirectory);
-  const repositoryDirectory = path.dirname(docsDirectory);
-  const hasPlanningShape =
-    /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) &&
-    path.basename(specsDirectory) === "specs" &&
-    path.basename(docsDirectory) === "docs";
-
-  let gitMarkerIsSafe = false;
-  if (hasPlanningShape) {
-    try {
-      const marker = await lstat(path.join(repositoryDirectory, ".git"));
-      gitMarkerIsSafe =
-        !marker.isSymbolicLink() && (marker.isDirectory() || marker.isFile());
-    } catch {
-      gitMarkerIsSafe = false;
-    }
-  }
-  if (!hasPlanningShape || !gitMarkerIsSafe) {
-    throw new PlanningCommandError(
-      "INVALID_SOURCE_RETIREMENT",
-      "Source retirement requires an explicit repository-local docs/specs/<slug> planning directory",
-    );
   }
 }
 
