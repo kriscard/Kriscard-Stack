@@ -1,4 +1,9 @@
 import type { CommandEvent, CommandRecord } from "../runtime/commands.js";
+import type {
+  PlanningCommandRequest,
+  PlanningEvent,
+  PlanningRun,
+} from "../runtime/planning.js";
 import { API_VERSION } from "./protocol.js";
 
 const MAX_EVENT_FRAME_CHARS = 1024 * 1024;
@@ -61,6 +66,62 @@ export function createControlPlaneClient(options: {
     return response;
   }
 
+  async function* eventStream<Event extends { position: number }>(
+    route: string,
+    eventType: string,
+    signal?: AbortSignal,
+  ): AsyncGenerator<Event> {
+    const response = await request(route, signal ? { signal } : {});
+    if (!response.body)
+      throw new ControlPlaneApiError(502, "MISSING_EVENT_STREAM");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let end: number;
+        while ((end = buffer.indexOf("\n\n")) !== -1) {
+          if (end > MAX_EVENT_FRAME_CHARS)
+            throw new ControlPlaneApiError(502, "EVENT_TOO_LARGE");
+          const frame = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          const type = frame
+            .split("\n")
+            .find((line) => line.startsWith("event: "))
+            ?.slice(7);
+          if (type === "reset")
+            throw new ControlPlaneApiError(410, "EXPIRED_POSITION");
+          if (type !== eventType) continue;
+          const id = frame
+            .split("\n")
+            .find((line) => line.startsWith("id: "))
+            ?.slice(4);
+          const data = frame
+            .split("\n")
+            .find((line) => line.startsWith("data: "))
+            ?.slice(6);
+          if (!id || !data)
+            throw new ControlPlaneApiError(502, "INVALID_EVENT");
+          const event = JSON.parse(data) as Event;
+          if (
+            event.position !== Number(id) ||
+            !Number.isSafeInteger(event.position)
+          )
+            throw new ControlPlaneApiError(502, "INVALID_EVENT");
+          yield event;
+        }
+        if (buffer.length > MAX_EVENT_FRAME_CHARS)
+          throw new ControlPlaneApiError(502, "EVENT_TOO_LARGE");
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+  }
+
   return {
     async health(): Promise<{ status: string; apiVersion: number }> {
       return (await (await request("health")).json()) as {
@@ -99,62 +160,49 @@ export function createControlPlaneClient(options: {
       ).json()) as { taskId: number; version: number };
     },
     /** Resume from the last acknowledged event ID; an expired ID requires a new state snapshot. */
-    async *events(
+    events(after: number, signal?: AbortSignal): AsyncGenerator<CommandEvent> {
+      return eventStream<CommandEvent>(
+        `events?after=${after}`,
+        "command",
+        signal,
+      );
+    },
+    async planningState(): Promise<{
+      version: number;
+      runs: Record<string, PlanningRun>;
+    }> {
+      return (await (await request("planning/state")).json()) as {
+        version: number;
+        runs: Record<string, PlanningRun>;
+      };
+    },
+    async planningRun(revisionId: string): Promise<PlanningRun> {
+      return (await (
+        await request(
+          `planning/runs?revisionId=${encodeURIComponent(revisionId)}`,
+        )
+      ).json()) as PlanningRun;
+    },
+    async submitPlanning(
+      input: PlanningCommandRequest,
+    ): Promise<{ version: number; taskId?: number }> {
+      return (await (
+        await request("planning/commands", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        })
+      ).json()) as { version: number; taskId?: number };
+    },
+    planningEvents(
       after: number,
       signal?: AbortSignal,
-    ): AsyncGenerator<CommandEvent> {
-      const response = await request(
-        `events?after=${after}`,
-        signal ? { signal } : {},
+    ): AsyncGenerator<PlanningEvent> {
+      return eventStream<PlanningEvent>(
+        `planning/events?after=${after}`,
+        "planning",
+        signal,
       );
-      if (!response.body)
-        throw new ControlPlaneApiError(502, "MISSING_EVENT_STREAM");
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          let end: number;
-          while ((end = buffer.indexOf("\n\n")) !== -1) {
-            if (end > MAX_EVENT_FRAME_CHARS)
-              throw new ControlPlaneApiError(502, "EVENT_TOO_LARGE");
-            const frame = buffer.slice(0, end);
-            buffer = buffer.slice(end + 2);
-            const type = frame
-              .split("\n")
-              .find((line) => line.startsWith("event: "))
-              ?.slice(7);
-            if (type === "reset")
-              throw new ControlPlaneApiError(410, "EXPIRED_POSITION");
-            if (type !== "command") continue;
-            const id = frame
-              .split("\n")
-              .find((line) => line.startsWith("id: "))
-              ?.slice(4);
-            const data = frame
-              .split("\n")
-              .find((line) => line.startsWith("data: "))
-              ?.slice(6);
-            if (!id || !data)
-              throw new ControlPlaneApiError(502, "INVALID_EVENT");
-            const event = JSON.parse(data) as CommandEvent;
-            if (
-              event.position !== Number(id) ||
-              !Number.isSafeInteger(event.position)
-            )
-              throw new ControlPlaneApiError(502, "INVALID_EVENT");
-            yield event;
-          }
-          if (buffer.length > MAX_EVENT_FRAME_CHARS)
-            throw new ControlPlaneApiError(502, "EVENT_TOO_LARGE");
-        }
-      } finally {
-        await reader.cancel().catch(() => {});
-        reader.releaseLock();
-      }
     },
     /** Artifacts are addressed by opaque IDs and streamed rather than embedded in events. */
     async artifact(opaqueId: string): Promise<Response> {

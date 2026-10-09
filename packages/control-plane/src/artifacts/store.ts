@@ -76,6 +76,8 @@ export interface RevisionImportRequest extends ImportOptions {
   revisionId: RevisionId;
   sourceDirectory: string;
   supportingFiles?: readonly string[];
+  /** Optional lifecycle receipts that must still match the canonical files at import time. */
+  expectedHashes?: { spec: string; plan: string };
 }
 
 export interface EvidenceImportRequest extends ImportOptions {
@@ -155,6 +157,16 @@ export function createArtifactStore(options: ArtifactStoreOptions = {}) {
       throw artifactStoreError(
         "HASH_MISMATCH",
         "Approval hashes do not match spec.md and plan.md",
+      );
+    }
+    if (
+      request.expectedHashes &&
+      (request.expectedHashes.spec !== spec.sha256 ||
+        request.expectedHashes.plan !== plan.sha256)
+    ) {
+      throw artifactStoreError(
+        "HASH_MISMATCH",
+        "Approved lifecycle receipts do not match spec.md and plan.md",
       );
     }
 

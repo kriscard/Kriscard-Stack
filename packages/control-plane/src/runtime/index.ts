@@ -7,3 +7,18 @@ export type {
   CommandEvent,
   CommandRequest,
 } from "./commands.js";
+export {
+  PlanningCommandError,
+  PlanningCommandRequestSchema,
+  PlanningRunSchema,
+  StalePlanningVersionError,
+} from "./planning.js";
+export type {
+  PlanningCommandRequest,
+  PlanningEvent,
+  PlanningGate,
+  PlanningGateReceipt,
+  PlanningGateStatus,
+  PlanningRun,
+  PlanningStage,
+} from "./planning.js";
