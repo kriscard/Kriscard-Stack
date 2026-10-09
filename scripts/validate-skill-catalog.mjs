@@ -3,6 +3,8 @@ import { readdir, readFile } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { parseSkillName } from "./skill-frontmatter.mjs";
+
 const scriptPath = fileURLToPath(import.meta.url);
 const root = resolve(dirname(scriptPath), "..");
 
@@ -21,30 +23,6 @@ const temporarySpecSkillPath = "skills/dev/spec/SKILL.md";
 
 /** @typedef {{ name: string, path: string }} Skill */
 /** @typedef {{ name: string, paths: string[] }} DuplicateSkill */
-
-/**
- * @param {string} contents
- * @param {string} path
- */
-function parseName(contents, path) {
-  const match = contents.match(/^---\n([\s\S]*?)\n---(?:\n|$)/);
-  if (!match) {
-    throw new Error(`${path} has no YAML frontmatter`);
-  }
-
-  const nameLine = match[1]
-    .split("\n")
-    .find((line) => line.startsWith("name:"));
-  const name = nameLine
-    ?.slice("name:".length)
-    .trim()
-    .replace(/^(?:"([^"]+)"|'([^']+)')$/, "$1$2");
-
-  if (!name) {
-    throw new Error(`${path} has no skill name`);
-  }
-  return name;
-}
 
 /**
  * @param {string} directory
@@ -70,7 +48,7 @@ export async function collectSkills(repositoryRoot) {
   const files = await findSkillFiles(skillsRoot);
   return Promise.all(
     files.map(async (path) => ({
-      name: parseName(await readFile(path, "utf8"), path),
+      name: parseSkillName(await readFile(path, "utf8"), path),
       path: relative(repositoryRoot, path),
     })),
   );

@@ -28,4 +28,7 @@ await runtime.submit({
   key: "crash-after-effect",
   operation: "test-external-effect",
 });
-setInterval(() => {}, 60_000);
+setInterval(() => {
+  // Keep the runtime (and its owner-lock FileHandle) live until the test kills us.
+  void runtime;
+}, 60_000);
