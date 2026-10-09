@@ -8,6 +8,14 @@ import { jsonRecord, readExisting } from "./configuration.js";
 import { SetupError } from "./errors.js";
 
 const execute = promisify(execFile);
+const commandOptions = {
+  timeout: 5_000,
+  maxBuffer: 16 * 1024,
+} as const;
+
+function executeReadOnlyGit(args: string[]) {
+  return execute("git", ["--no-optional-locks", ...args], commandOptions);
+}
 
 export type Diagnostic = {
   id: string;
@@ -48,10 +56,8 @@ export type DoctorOptions = {
 
 async function probeTool(tool: Tool): Promise<boolean> {
   try {
-    await execute(tool, ["--version"], {
-      timeout: 5_000,
-      maxBuffer: 16 * 1024,
-    });
+    if (tool === "git") await executeReadOnlyGit(["--version"]);
+    else await execute(tool, ["--version"], commandOptions);
     return true;
   } catch {
     return false;
@@ -162,14 +168,12 @@ export async function doctor(options: DoctorOptions): Promise<{
     )
       throw new Error("Invalid compatibility manifest");
     const revision = (
-      await execute(
-        "git",
-        ["-C", options.generalRepository, "rev-parse", "HEAD"],
-        {
-          timeout: 5_000,
-          maxBuffer: 16 * 1024,
-        },
-      )
+      await executeReadOnlyGit([
+        "-C",
+        options.generalRepository,
+        "rev-parse",
+        "HEAD",
+      ])
     ).stdout.trim();
     if (revision !== manifest.revision) {
       add({
@@ -181,23 +185,16 @@ export async function doctor(options: DoctorOptions): Promise<{
       });
     } else {
       const dirty = (
-        await execute(
-          "git",
-          [
-            "-C",
-            options.generalRepository,
-            "-c",
-            "core.fsmonitor=false",
-            "status",
-            "--porcelain",
-            "--",
-            "skills",
-          ],
-          {
-            timeout: 5_000,
-            maxBuffer: 16 * 1024,
-          },
-        )
+        await executeReadOnlyGit([
+          "-C",
+          options.generalRepository,
+          "-c",
+          "core.fsmonitor=false",
+          "status",
+          "--porcelain",
+          "--",
+          "skills",
+        ])
       ).stdout.trim();
       add(
         dirty
