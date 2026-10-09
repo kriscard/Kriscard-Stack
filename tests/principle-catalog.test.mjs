@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, test } from "vitest";
 
+import { collectSkills } from "../scripts/validate-skill-catalog.mjs";
+
 const execFileAsync = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const generator = resolve(root, "scripts/generate-principle-catalog.mjs");
@@ -66,13 +68,22 @@ async function fixtureRoot() {
     "prove-real-behavior",
     "stop-on-plan-drift",
   ];
+  const descriptionFields = [
+    "description: Fixture trigger 1 in plain YAML.",
+    'description: "Fixture trigger 2 in double quotes."',
+    "description: 'Fixture trigger 3 in single quotes.'",
+    "description: >\n  Fixture trigger 4 in a folded block\n  with a continuation.",
+    "description: |-\n  Fixture trigger 5 in a literal block\n  with a continuation.",
+    "description: >+\n  Fixture trigger 6 in a kept folded block\n  with a continuation.",
+  ];
   for (const [index, suffix] of names.entries()) {
     const name = `principle-${suffix}`;
+    const nameField = index === 0 ? `\"${name}\"` : name;
     const directory = resolve(fixture, "skills/dev", name);
     await mkdir(directory, { recursive: true });
     await writeFile(
       resolve(directory, "SKILL.md"),
-      `---\nname: ${name}\ndescription: >-\n  Fixture trigger ${index + 1} for ${name}.\n---\n\n# Fixture\n`,
+      `---\nname: ${nameField}\n${descriptionFields[index]}\n---\n\n# Fixture\n`,
     );
   }
   return fixture;
@@ -111,6 +122,34 @@ describe("generated principle discovery catalog", () => {
     }
   });
 
+  test("normalizes quoted names and supported YAML description forms", async () => {
+    const fixture = await fixtureRoot();
+    await execFileAsync(process.execPath, [generator, "--root", fixture]);
+    const catalog = await readFile(
+      resolve(fixture, "skills/dev/PRINCIPLES.md"),
+      "utf8",
+    );
+
+    assert.match(catalog, /^## `principle-boundary-discipline`$/m);
+    assert.doesNotMatch(catalog, /## `"principle-boundary-discipline"`/);
+    assert.ok(
+      (await collectSkills(fixture)).some(
+        ({ name }) => name === "principle-boundary-discipline",
+      ),
+      "skill-catalog validation and generation must normalize quoted names alike",
+    );
+    for (const description of [
+      "Fixture trigger 1 in plain YAML.",
+      "Fixture trigger 2 in double quotes.",
+      "Fixture trigger 3 in single quotes.",
+      "Fixture trigger 4 in a folded block with a continuation.",
+      "Fixture trigger 5 in a literal block with a continuation.",
+      "Fixture trigger 6 in a kept folded block with a continuation.",
+    ]) {
+      assert.ok(catalog.includes(description));
+    }
+  });
+
   test("generation is deterministic and check mode accepts current output", async () => {
     const fixture = await fixtureRoot();
     await execFileAsync(process.execPath, [generator, "--root", fixture]);
@@ -144,8 +183,8 @@ describe("generated principle discovery catalog", () => {
     await writeFile(
       skill,
       (await readFile(skill, "utf8")).replace(
-        "Fixture trigger 1",
-        "Changed fixture trigger",
+        "Fixture trigger 1 in plain YAML.",
+        "Changed fixture trigger in plain YAML.",
       ),
     );
 

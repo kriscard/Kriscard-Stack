@@ -2,6 +2,8 @@ import { readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { frontmatterField, skillFrontmatter } from "./skill-frontmatter.mjs";
+
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultRoot = resolve(dirname(scriptPath), "..");
 const principleNames = [
@@ -20,26 +22,13 @@ const principleNames = [
  * @param {string} path
  */
 function parsePrinciple(contents, path) {
-  const frontmatter = contents.match(/^---\n([\s\S]*?)\n---(?:\n|$)/)?.[1];
-  if (!frontmatter) throw new Error(`${path} has no YAML frontmatter`);
-
-  const name = frontmatter.match(/^name:\s*([^\n]+)$/m)?.[1].trim();
-  const description = frontmatter.match(
-    /^description:\s*>-\n((?:[ \t]+[^\n]*(?:\n|$))*)/m,
-  )?.[1];
+  const frontmatter = skillFrontmatter(contents, path);
+  const name = frontmatterField(frontmatter, "name");
+  const description = frontmatterField(frontmatter, "description");
   if (!name) throw new Error(`${path} has no principle name`);
-  if (description === undefined) {
-    throw new Error(`${path} must use a folded frontmatter description`);
-  }
+  if (!description) throw new Error(`${path} has no principle description`);
 
-  return {
-    name,
-    description: description
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .join(" "),
-  };
+  return { name, description };
 }
 
 /** @param {string} repositoryRoot */
