@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "vitest";
 
 import {
+  approvedTemporaryDuplicateNames,
   collectSkills,
   duplicateSkills,
 } from "../scripts/validate-skill-catalog.mjs";
@@ -109,7 +110,9 @@ test("T9 temporary spec duplicate is exact and remains unreleased", async () => 
   const packageManifest = JSON.parse(
     await readFile(path.join(root, "package.json"), "utf8"),
   );
+  const readme = await readFile(path.join(root, "README.md"), "utf8");
   assert.equal(packageManifest.private, true);
+  assert.match(readme, /not ready to install/i);
   assert.equal(
     await skillName(path.join(stackSpecRoot, "SKILL.md")),
     await skillName(path.join(generalSpecRoot, "SKILL.md")),
@@ -120,4 +123,48 @@ test("T9 temporary spec duplicate is exact and remains unreleased", async () => 
     await collectSkills(generalSkillsRoot),
   );
   assert.deepEqual(duplicates.map(({ name }) => name).sort(), ["spec"]);
+  assert.deepEqual(
+    [
+      ...(await approvedTemporaryDuplicateNames({
+        duplicates,
+        stackRoot: root,
+        generalRoot: generalSkillsRoot,
+        packagePrivate: packageManifest.private,
+      })),
+    ],
+    ["spec"],
+  );
+});
+
+test("T9 temporary exception does not permit ordinary catalog duplicates", async () => {
+  const duplicates = [
+    {
+      name: "spec",
+      paths: ["skills/dev/spec/SKILL.md", "skills/dev/spec/SKILL.md"],
+    },
+    { name: "debug", paths: ["skills/dev/debug/SKILL.md", "other.md"] },
+  ];
+  const approved = await approvedTemporaryDuplicateNames({
+    duplicates,
+    stackRoot: root,
+    generalRoot: generalSkillsRoot,
+    packagePrivate: true,
+  });
+
+  assert.deepEqual([...approved], ["spec"]);
+  assert.deepEqual(
+    duplicates.filter(({ name }) => !approved.has(name)),
+    [duplicates[1]],
+  );
+  assert.deepEqual(
+    [
+      ...(await approvedTemporaryDuplicateNames({
+        duplicates,
+        stackRoot: root,
+        generalRoot: generalSkillsRoot,
+        packagePrivate: false,
+      })),
+    ],
+    [],
+  );
 });
