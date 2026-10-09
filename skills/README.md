@@ -1,6 +1,5 @@
-# Product skills
+# Kriscard Stack skills
 
-This directory owns Kriscard Stack workflow skills and engineering principles.
-General-purpose skills remain in [`kriscard/Skills`](https://github.com/kriscard/Skills).
+This directory owns the `kriscard-mode` router, its playbooks, and optional personal engineering principles.
 
-See the generated [engineering principle catalog](dev/PRINCIPLES.md) to discover the independently installable principles from their authoritative skill descriptions.
+General-purpose implementation, testing, review, framework, and knowledge skills remain in [`kriscard/Skills`](https://github.com/kriscard/Skills).

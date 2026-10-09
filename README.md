@@ -1,30 +1,58 @@
 # Kriscard Stack
 
-Kriscard Stack is a personal AI engineering system for planning, implementing, verifying, and shipping software with explicit human approval.
+Kriscard Stack is a skill-first engineering workflow inspired by Pstack.
 
-> The project is public but not ready to install. The first release is being built through reviewed, independently verified tasks.
+`kriscard-mode` chooses one playbook. The playbook composes the installed skills needed for the work. A small Pi Durable runner keeps one coding agent per working directory resumable across process restarts.
 
-## Repository ownership
+```text
+request
+  → kriscard-mode
+    → one playbook
+      → installed skills
+        → durable Pi coding agent
+          → project files, tests, Git and GitHub
+```
 
-Kriscard Stack owns its product workflows and runtime. Reusable engineering and knowledge-management skills remain in [`kriscard/Skills`](https://github.com/kriscard/Skills).
+There is no custom control plane, planning database, artifact authority, HTTP API, migration system, or worker framework. Those can be added later only when a demonstrated workflow problem requires them.
 
-The compatible Skills revision is recorded in [`config/skills-source.json`](config/skills-source.json). CI checks both catalogs together so one skill cannot have two active owners.
-
-## Layout
-
-- `skills/` — product workflow skills and engineering principles
-- `agents/` — host-neutral worker and verifier contracts
-- `packages/` — core, control plane, CLI, host packages, and integrations
-- `config/` — versioned compatibility declarations
-- `scripts/` — repository validation
-
-## Development
-
-Requirements: an up-to-date Node.js 24 LTS release (or newer) and pnpm 10 or newer. CI tests both Node 24 LTS and Node 26 Current with Vitest.
+## Install
 
 ```bash
 pnpm install
-pnpm run check
+pnpm run build
 ```
 
-`KRISCARD_SKILLS_REPO` may point catalog validation at a local checkout of `kriscard/Skills`. Without it, validation expects the sibling path `../Skills`.
+Install the general-purpose skills separately:
+
+```bash
+npx skills@latest add kriscard/Skills -g
+```
+
+## Run
+
+Choose any provider and tool-capable model supported by `@earendil-works/pi-ai`, with its normal credentials available in the environment:
+
+```bash
+export KRISCARD_MODEL="anthropic:claude-sonnet-4-6"
+pnpm kriscard -- "Fix the failing checkout test"
+```
+
+Run the same command from the same project later to continue its durable conversation. State is stored in one SQLite file per working directory under:
+
+```text
+${XDG_DATA_HOME:-$HOME/.local/share}/kriscard-stack/
+```
+
+This first version intentionally runs one durable agent. Parallel durable subagents, Claude Code integration, remote APIs, and dashboards wait until the basic workflow proves they are needed.
+
+## Repository
+
+- `skills/dev/kriscard-mode/` — router and playbooks
+- `skills/dev/principle-*/` — optional engineering principles
+- `packages/pi-runner/` — thin Pi Durable coding-agent runner
+
+## Development
+
+```bash
+pnpm run check
+```
