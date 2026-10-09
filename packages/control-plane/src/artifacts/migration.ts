@@ -286,6 +286,8 @@ export function createMigrationOperations(options: MigrationOptions) {
     }
 
     const retired = new Set(journal.retiredFiles ?? []);
+    // Validate every remaining source before deleting any of them. A stale or
+    // altered supporting artifact must not leave the caller's bundle partial.
     for (const source of journal.sources) {
       if (retired.has(source.sourcePath)) continue;
       const expected = journal.manifest.files.find(
@@ -301,7 +303,28 @@ export function createMigrationOperations(options: MigrationOptions) {
         journal.sourceDirectory,
         source.sourcePath,
       );
+      if (!(await pathExists(sourcePath))) continue;
+      const safeSource = await assertSafeSourceFile(
+        journal.sourceDirectory,
+        source.sourcePath,
+      );
+      assertExpectedHash(
+        await hashFile(safeSource),
+        expected,
+        source.sourcePath,
+      );
+    }
+
+    for (const source of journal.sources) {
+      if (retired.has(source.sourcePath)) continue;
+      const sourcePath = resolveWithin(
+        journal.sourceDirectory,
+        source.sourcePath,
+      );
       if (await pathExists(sourcePath)) {
+        const expected = journal.manifest.files.find(
+          (file) => file.path === source.storedPath,
+        )!;
         const safeSource = await assertSafeSourceFile(
           journal.sourceDirectory,
           source.sourcePath,
