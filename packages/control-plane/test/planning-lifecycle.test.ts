@@ -50,6 +50,30 @@ async function fixtureRoot(t: {
   return { temporary, dataRoot: path.join(temporary, "data"), source };
 }
 
+async function repositoryPlanningFixture(t: {
+  onTestFinished: (callback: () => Promise<void>) => void;
+}): Promise<{
+  temporary: string;
+  dataRoot: string;
+  source: string;
+}> {
+  const temporary = await mkdtemp(path.join(tmpdir(), "kriscard-planning-"));
+  t.onTestFinished(() => rm(temporary, { recursive: true, force: true }));
+  const repository = path.join(temporary, "repository");
+  const source = path.join(repository, "docs", "specs", "approved-work");
+  await mkdir(path.join(repository, ".git"), { recursive: true });
+  await mkdir(source, { recursive: true });
+  await writeFile(
+    path.join(source, "spec.md"),
+    "# Requirements\n\nR1 approved.\n",
+  );
+  return {
+    temporary,
+    dataRoot: path.join(temporary, "data"),
+    source,
+  };
+}
+
 function planningIdentity() {
   const workItemId = createId("workItem", randomUUID());
   const revisionId = createId("revision", randomUUID());
@@ -91,6 +115,7 @@ async function startRun(
   source: string,
   identity: ReturnType<typeof planningIdentity>,
   supportingFiles: readonly string[] = [],
+  sourceDisposition: "preserve" | "retire" = "preserve",
 ): Promise<void> {
   await client.submitPlanning({
     key: `start-${identity.revisionId}`,
@@ -100,6 +125,7 @@ async function startRun(
     context: identity.context,
     sourceDirectory: source,
     supportingFiles: [...supportingFiles],
+    sourceDisposition,
   });
 }
 
@@ -138,8 +164,9 @@ async function completeStages(
   source: string,
   identity: ReturnType<typeof planningIdentity>,
   supportingFiles: readonly string[] = [],
+  sourceDisposition: "preserve" | "retire" = "preserve",
 ): Promise<{ specHash: string; planHash: string }> {
-  await startRun(client, source, identity, supportingFiles);
+  await startRun(client, source, identity, supportingFiles, sourceDisposition);
   await approveStage(
     client,
     source,
@@ -197,6 +224,254 @@ async function waitForRun(
     },
     { timeout: 5_000, interval: 10 },
   );
+}
+
+test("finalization retires only an explicit repository-local planning source after storing supporting artifacts", async (t) => {
+  const { dataRoot, source, temporary } = await repositoryPlanningFixture(t);
+  const identity = planningIdentity();
+  await mkdir(path.join(source, "notes"));
+  await writeFile(
+    path.join(source, "notes", "decision.md"),
+    "# Supporting decision\n",
+  );
+  await writeFile(path.join(source, "keep.txt"), "unmanaged repository file\n");
+
+  const runtime = await openControlPlane(dataRoot);
+  const { server, client } = await openApi(runtime);
+  t.onTestFinished(async () => {
+    await server.close();
+    await runtime.close();
+  });
+
+  await startRun(client, source, identity, ["notes/decision.md"], "retire");
+  await approveStage(
+    client,
+    source,
+    identity.revisionId,
+    "requirements",
+    "retirement",
+  );
+  await writeFile(
+    path.join(source, "spec.md"),
+    "# Requirements\n\nR1 approved.\n\n# Technical Design\n\nD1 approved.\n",
+  );
+  const specHash = await approveStage(
+    client,
+    source,
+    identity.revisionId,
+    "design",
+    "retirement",
+  );
+  await writeFile(path.join(source, "plan.md"), "# Plan\n\nT1 / V1\n");
+  const planHash = await approveStage(
+    client,
+    source,
+    identity.revisionId,
+    "plan",
+    "retirement",
+  );
+  await writeApproval(source, { specHash, planHash });
+
+  await client.submitPlanning({
+    key: "finalize-repository-retirement",
+    operation: "finalize",
+    expectedVersion: await currentVersion(client),
+    revisionId: identity.revisionId,
+  });
+  await waitForRun(client, identity.revisionId, "approved");
+
+  for (const migratedFile of [
+    "spec.md",
+    "plan.md",
+    "approval.md",
+    path.join("notes", "decision.md"),
+  ]) {
+    await assert.rejects(readFile(path.join(source, migratedFile)));
+  }
+  assert.equal(
+    await readFile(path.join(source, "keep.txt"), "utf8"),
+    "unmanaged repository file\n",
+  );
+  const store = createArtifactStore({ root: dataRoot });
+  const exported = path.join(temporary, "exported");
+  await store.export(
+    {
+      kind: "revision",
+      repositoryFingerprint: identity.context.repositoryFingerprint,
+      workItemId: identity.context.workItemId,
+      revisionId: identity.revisionId,
+    },
+    exported,
+  );
+  assert.equal(
+    await readFile(
+      path.join(exported, "supporting", "notes", "decision.md"),
+      "utf8",
+    ),
+    "# Supporting decision\n",
+  );
+});
+
+test("planning refuses to retire an arbitrary caller-provided source", async (t) => {
+  const { dataRoot, temporary } = await fixtureRoot(t);
+  const source = path.join(
+    temporary,
+    "application",
+    "docs",
+    "specs",
+    "user-content",
+  );
+  await mkdir(source, { recursive: true });
+  await writeFile(
+    path.join(source, "spec.md"),
+    "# Requirements\n\nR1 approved.\n",
+  );
+  const identity = planningIdentity();
+  const runtime = await openControlPlane(dataRoot);
+  const { server, client } = await openApi(runtime);
+  t.onTestFinished(async () => {
+    await server.close();
+    await runtime.close();
+  });
+
+  await assert.rejects(
+    startRun(client, source, identity, [], "retire"),
+    (error) =>
+      error instanceof ControlPlaneApiError &&
+      error.code === "INVALID_SOURCE_RETIREMENT",
+  );
+  assert.equal(
+    await readFile(path.join(source, "spec.md"), "utf8"),
+    "# Requirements\n\nR1 approved.\n",
+  );
+});
+
+test("retirement failure preserves every validated source and blocks approval", async (t) => {
+  const { dataRoot, source } = await repositoryPlanningFixture(t);
+  const identity = planningIdentity();
+  await mkdir(path.join(source, "notes"));
+  await writeFile(path.join(source, "notes", "decision.md"), "original\n");
+  let changedAfterCopy = false;
+  const store = createArtifactStore({
+    root: dataRoot,
+    async onCheckpoint(checkpoint) {
+      if (!changedAfterCopy && checkpoint.phase === "committed") {
+        changedAfterCopy = true;
+        await writeFile(path.join(source, "notes", "decision.md"), "changed\n");
+      }
+    },
+  });
+  const runtime = await openControlPlane(
+    dataRoot,
+    BACKGROUND_CONTEXT,
+    undefined,
+    {
+      artifactStore: store,
+    },
+  );
+  const { server, client } = await openApi(runtime);
+  t.onTestFinished(async () => {
+    await server.close();
+    await runtime.close();
+  });
+
+  const hashes = await completeStages(
+    client,
+    source,
+    identity,
+    ["notes/decision.md"],
+    "retire",
+  );
+  await writeApproval(source, hashes);
+  await client.submitPlanning({
+    key: "finalize-retirement-failure",
+    operation: "finalize",
+    expectedVersion: await currentVersion(client),
+    revisionId: identity.revisionId,
+  });
+
+  const blocked = await waitForRun(client, identity.revisionId, "blocked");
+  assert.equal(blocked.error?.code, "HASH_MISMATCH");
+  for (const preservedFile of ["spec.md", "plan.md", "approval.md"]) {
+    assert.ok((await readFile(path.join(source, preservedFile))).length > 0);
+  }
+  assert.equal(
+    await readFile(path.join(source, "notes", "decision.md"), "utf8"),
+    "changed\n",
+  );
+});
+
+for (const interruptionPhase of ["source_retired", "retired"] as const) {
+  test(`restart reconciles an interrupted ${interruptionPhase} checkpoint before approval`, async (t) => {
+    const { dataRoot, source } = await repositoryPlanningFixture(t);
+    const identity = planningIdentity();
+    await mkdir(path.join(source, "notes"));
+    await writeFile(path.join(source, "notes", "decision.md"), "decision\n");
+    let interrupted = false;
+    const interruptingStore = createArtifactStore({
+      root: dataRoot,
+      onCheckpoint(checkpoint) {
+        if (!interrupted && checkpoint.phase === interruptionPhase) {
+          interrupted = true;
+          throw new Error(`simulated ${interruptionPhase} interruption`);
+        }
+      },
+    });
+
+    let runtime = await openControlPlane(
+      dataRoot,
+      BACKGROUND_CONTEXT,
+      undefined,
+      { artifactStore: interruptingStore },
+    );
+    let api = await openApi(runtime);
+    t.onTestFinished(async () => {
+      await api.server.close();
+      await runtime.close();
+    });
+    const hashes = await completeStages(
+      api.client,
+      source,
+      identity,
+      ["notes/decision.md"],
+      "retire",
+    );
+    await writeApproval(source, hashes);
+    await api.client.submitPlanning({
+      key: `finalize-interrupted-${interruptionPhase}`,
+      operation: "finalize",
+      expectedVersion: await currentVersion(api.client),
+      revisionId: identity.revisionId,
+    });
+    const blocked = await waitForRun(
+      api.client,
+      identity.revisionId,
+      "blocked",
+    );
+    assert.equal(blocked.currentStage, "approval");
+    assert.equal(blocked.error?.code, "FINALIZATION_FAILED");
+
+    await api.server.close();
+    await runtime.close();
+    runtime = await openControlPlane(dataRoot);
+    api = await openApi(runtime);
+    await api.client.submitPlanning({
+      key: `resume-interrupted-${interruptionPhase}`,
+      operation: "finalize",
+      expectedVersion: await currentVersion(api.client),
+      revisionId: identity.revisionId,
+    });
+    await waitForRun(api.client, identity.revisionId, "approved");
+
+    for (const retiredFile of [
+      "spec.md",
+      "plan.md",
+      "approval.md",
+      path.join("notes", "decision.md"),
+    ]) {
+      await assert.rejects(readFile(path.join(source, retiredFile)));
+    }
+  });
 }
 
 test("planning API enforces Requirements, Design, Plan, and immutable approval in order", async (t) => {
@@ -316,6 +591,9 @@ test("planning API enforces Requirements, Design, Plan, and immutable approval i
     approved.gates.requirements.receipt?.approvedAt ?? "",
     createdAtPattern,
   );
+  assert.ok((await readFile(path.join(source, "spec.md"))).length > 0);
+  assert.ok((await readFile(path.join(source, "plan.md"))).length > 0);
+  assert.ok((await readFile(path.join(source, "approval.md"))).length > 0);
 
   const manifest = await createArtifactStore({ root: dataRoot }).verify({
     kind: "revision",

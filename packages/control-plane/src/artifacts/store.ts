@@ -76,6 +76,8 @@ export interface RevisionImportRequest extends ImportOptions {
   revisionId: RevisionId;
   sourceDirectory: string;
   supportingFiles?: readonly string[];
+  /** Controls post-copy cleanup; planning callers default to preserving unvalidated sources. */
+  sourceDisposition?: "retire" | "preserve";
   /** Optional lifecycle receipts that must still match the canonical files at import time. */
   expectedHashes?: { spec: string; plan: string };
 }
@@ -185,7 +187,7 @@ export function createArtifactStore(options: ArtifactStoreOptions = {}) {
     };
     const prepared: PreparedBundle = {
       sourceDirectory,
-      sourceDisposition: "retire",
+      sourceDisposition: request.sourceDisposition ?? "retire",
       destinationRelative: destinationRelative(manifest),
       manifest: ArtifactBundleManifestSchema.parse(manifest),
       sources,
