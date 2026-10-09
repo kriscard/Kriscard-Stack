@@ -44,6 +44,10 @@ function digest(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
+function approvalMarkdown(spec: string, plan: string): string {
+  return `# Approval\n\nStatus: Approved\nMethod: Plannotator\nApproved at: ${createdAt}\n\n## Approved artifacts\n\n- \`spec.md\`\n  - SHA-256: \`${digest(spec)}\`\n- \`plan.md\`\n  - SHA-256: \`${digest(plan)}\`\n\n## Stage approvals\n\n- Requirements: Plannotator decision requirements-approved\n- Technical Design: Plannotator decision design-approved\n- Plan: Plannotator decision plan-approved\n\n## Exceptions\n\nNone.\n`;
+}
+
 function createContext(): EvidenceArtifactContext {
   return {
     repositoryFingerprint: "github.com/kriscard/Kriscard-Stack",
@@ -63,7 +67,7 @@ async function createApprovedSource(
 ): Promise<string> {
   const source = path.join(root, "approved-source");
   await mkdir(source, { recursive: true });
-  const approval = `# Approval\n\n- \`spec.md\`\n  - SHA-256: \`${digest(spec)}\`\n- \`plan.md\`\n  - SHA-256: \`${digest(plan)}\`\n`;
+  const approval = approvalMarkdown(spec, plan);
   await writeFile(path.join(source, "spec.md"), spec);
   await writeFile(path.join(source, "plan.md"), plan);
   await writeFile(path.join(source, "approval.md"), approval);
@@ -475,6 +479,70 @@ test("rejects approval hash mismatches", async (t) => {
     }),
     (error) => isArtifactStoreError(error) && error.code === "HASH_MISMATCH",
   );
+});
+
+test("rejects incomplete, conflicting, or rejected approval lifecycle metadata", async (t) => {
+  const temporary = await temporaryTestRoot(t);
+  const malformedApprovals = new Map<string, (approval: string) => string>([
+    [
+      "rejected",
+      (approval) => approval.replace("Status: Approved", "Status: Rejected"),
+    ],
+    [
+      "missing method",
+      (approval) => approval.replace("Method: Plannotator\n", ""),
+    ],
+    [
+      "missing timestamp",
+      (approval) => approval.replace(/^Approved at:.*\n/m, ""),
+    ],
+    [
+      "conflicting status",
+      (approval) =>
+        approval.replace(
+          "Status: Approved\n",
+          "Status: Approved\nStatus: Rejected\n",
+        ),
+    ],
+    [
+      "missing design decision",
+      (approval) => approval.replace(/^.*Technical Design:.*\n/m, ""),
+    ],
+    [
+      "conflicting plan decision",
+      (approval) =>
+        approval.replace(
+          "- Plan: Plannotator decision plan-approved",
+          "- Plan: Plannotator decision rejected",
+        ),
+    ],
+    [
+      "missing exceptions",
+      (approval) => approval.replace(/\n## Exceptions\n\nNone\.\n$/, "\n"),
+    ],
+  ]);
+
+  for (const [name, mutate] of malformedApprovals) {
+    const fixtureRoot = path.join(temporary, name.replaceAll(" ", "-"));
+    const source = await createApprovedSource(fixtureRoot);
+    const approvalPath = path.join(source, "approval.md");
+    await writeFile(approvalPath, mutate(await readFile(approvalPath, "utf8")));
+    const store = createArtifactStore({
+      root: path.join(temporary, `store-${name.replaceAll(" ", "-")}`),
+    });
+
+    await assert.rejects(
+      store.importApprovedRevision({
+        context: createContext(),
+        revisionId: createId("revision", randomUUID()),
+        sourceDirectory: source,
+        createdAt,
+      }),
+      (error) =>
+        isArtifactStoreError(error) && error.code === "INVALID_ARTIFACT",
+      name,
+    );
+  }
 });
 
 test("rejects traversal and source or destination symlink escapes", async (t) => {

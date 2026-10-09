@@ -54,18 +54,9 @@ test("T9 plain spec skill exactly matches the pinned general Skills source", asy
   ).trim();
   assert.equal(revision, manifest.revision);
   assert.equal(
-    execFileSync(
-      "git",
-      [
-        "-C",
-        generalSkillsRoot,
-        "status",
-        "--porcelain",
-        "--",
-        "skills/dev/spec",
-      ],
-      { encoding: "utf8" },
-    ),
+    execFileSync("git", ["-C", generalSkillsRoot, "status", "--porcelain"], {
+      encoding: "utf8",
+    }),
     "",
   );
 

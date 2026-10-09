@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test, vi } from "vitest";
@@ -83,6 +90,7 @@ async function startRun(
   client: Client,
   source: string,
   identity: ReturnType<typeof planningIdentity>,
+  supportingFiles: readonly string[] = [],
 ): Promise<void> {
   await client.submitPlanning({
     key: `start-${identity.revisionId}`,
@@ -91,6 +99,7 @@ async function startRun(
     revisionId: identity.revisionId,
     context: identity.context,
     sourceDirectory: source,
+    supportingFiles: [...supportingFiles],
   });
 }
 
@@ -128,8 +137,9 @@ async function completeStages(
   client: Client,
   source: string,
   identity: ReturnType<typeof planningIdentity>,
+  supportingFiles: readonly string[] = [],
 ): Promise<{ specHash: string; planHash: string }> {
-  await startRun(client, source, identity);
+  await startRun(client, source, identity, supportingFiles);
   await approveStage(
     client,
     source,
@@ -165,11 +175,10 @@ async function completeStages(
 async function writeApproval(
   source: string,
   hashes: { specHash: string; planHash: string },
+  mutate: (approval: string) => string = (approval) => approval,
 ): Promise<void> {
-  await writeFile(
-    path.join(source, "approval.md"),
-    `# Approval\n\nStatus: Approved\nMethod: Plannotator\n\n## Approved artifacts\n\n- \`spec.md\`\n  - SHA-256: \`${hashes.specHash}\`\n- \`plan.md\`\n  - SHA-256: \`${hashes.planHash}\`\n`,
-  );
+  const approval = `# Approval\n\nStatus: Approved\nMethod: Plannotator\nApproved at: 2026-10-08T12:41:21Z\n\n## Approved artifacts\n\n- \`spec.md\`\n  - SHA-256: \`${hashes.specHash}\`\n- \`plan.md\`\n  - SHA-256: \`${hashes.planHash}\`\n\n## Stage approvals\n\n- Requirements: Plannotator decision requirements-approved\n- Technical Design: Plannotator decision design-approved\n- Plan: Plannotator decision plan-approved\n\n## Exceptions\n\nNone.\n`;
+  await writeFile(path.join(source, "approval.md"), mutate(approval));
 }
 
 async function waitForRun(
@@ -318,6 +327,125 @@ test("planning API enforces Requirements, Design, Plan, and immutable approval i
   assert.equal(manifest.approvedHashes.spec, specHash);
 });
 
+test("supporting files persist across restart and finalize without unsafe paths", async (t) => {
+  const { temporary, dataRoot, source } = await fixtureRoot(t);
+  const identity = planningIdentity();
+  await mkdir(path.join(source, "notes"));
+  await writeFile(
+    path.join(source, "notes", "decision.md"),
+    "# Supporting decision\n",
+  );
+
+  let runtime = await openControlPlane(dataRoot);
+  let api = await openApi(runtime);
+  t.onTestFinished(async () => {
+    await api.server.close();
+    await runtime.close();
+  });
+
+  await assert.rejects(
+    api.client.submitPlanning({
+      key: "unsafe-supporting-file",
+      operation: "start",
+      expectedVersion: await currentVersion(api.client),
+      revisionId: identity.revisionId,
+      context: identity.context,
+      sourceDirectory: source,
+      supportingFiles: ["../outside.md"],
+    }),
+    (error) =>
+      error instanceof ControlPlaneApiError &&
+      error.code === "INVALID_SUPPORTING_FILE",
+  );
+  const outside = path.join(temporary, "outside.md");
+  await writeFile(outside, "outside\n");
+  await symlink(outside, path.join(source, "notes", "linked.md"));
+  await assert.rejects(
+    api.client.submitPlanning({
+      key: "symlinked-supporting-file",
+      operation: "start",
+      expectedVersion: await currentVersion(api.client),
+      revisionId: identity.revisionId,
+      context: identity.context,
+      sourceDirectory: source,
+      supportingFiles: ["notes/linked.md"],
+    }),
+    (error) =>
+      error instanceof ControlPlaneApiError &&
+      error.code === "INVALID_SUPPORTING_FILE",
+  );
+
+  await startRun(api.client, source, identity, ["notes/decision.md"]);
+  await approveStage(
+    api.client,
+    source,
+    identity.revisionId,
+    "requirements",
+    "supporting",
+  );
+  await writeFile(
+    path.join(source, "spec.md"),
+    "# Requirements\n\nR1 approved.\n\n# Technical Design\n\nSee [decision](notes/decision.md).\n",
+  );
+  const specHash = await approveStage(
+    api.client,
+    source,
+    identity.revisionId,
+    "design",
+    "supporting",
+  );
+  await writeFile(path.join(source, "plan.md"), "# Plan\n\nT1 / V1\n");
+  const planHash = await approveStage(
+    api.client,
+    source,
+    identity.revisionId,
+    "plan",
+    "supporting",
+  );
+  await writeApproval(source, { specHash, planHash });
+
+  await api.server.close();
+  await runtime.close();
+  runtime = await openControlPlane(dataRoot);
+  api = await openApi(runtime);
+  assert.deepEqual(
+    (await api.client.planningRun(identity.revisionId)).supportingFiles,
+    ["notes/decision.md"],
+  );
+
+  await api.client.submitPlanning({
+    key: "finalize-with-supporting-file",
+    operation: "finalize",
+    expectedVersion: await currentVersion(api.client),
+    revisionId: identity.revisionId,
+  });
+  await waitForRun(api.client, identity.revisionId, "approved");
+
+  const store = createArtifactStore({ root: dataRoot });
+  const reference = {
+    kind: "revision" as const,
+    repositoryFingerprint: identity.context.repositoryFingerprint,
+    workItemId: identity.context.workItemId,
+    revisionId: identity.revisionId,
+  };
+  const manifest = await store.verify(reference);
+  assert.equal(manifest.kind, "revision");
+  assert.ok(
+    manifest.files.some(
+      ({ path: storedPath }) => storedPath === "supporting/notes/decision.md",
+    ),
+  );
+  const exported = path.join(temporary, "exported");
+  await store.export(reference, exported);
+  assert.equal(
+    await readFile(
+      path.join(exported, "supporting", "notes", "decision.md"),
+      "utf8",
+    ),
+    "# Supporting decision\n",
+  );
+});
+
 test("planning revisions invalidate only the approved stage and its downstream gates", async (t) => {
   const { dataRoot, source } = await fixtureRoot(t);
   const identity = planningIdentity();
@@ -393,6 +521,47 @@ for (const changedFile of ["spec.md", "plan.md"] as const) {
     const blocked = await waitForRun(client, identity.revisionId, "blocked");
     assert.equal(blocked.currentStage, "approval");
     assert.equal(blocked.error?.code, "HASH_MISMATCH", blocked.error?.message);
+    assert.equal(blocked.artifact, null);
+  });
+}
+
+for (const [fixture, mutate] of [
+  [
+    "rejected status",
+    (approval: string) =>
+      approval.replace("Status: Approved", "Status: Rejected"),
+  ],
+  [
+    "malformed lifecycle metadata",
+    (approval: string) =>
+      approval.replace(/\n## Stage approvals\n[\s\S]*?(?=\n## Exceptions)/, ""),
+  ],
+] as const) {
+  test(`finalization rejects ${fixture} even when artifact hashes match`, async (t) => {
+    const { dataRoot, source } = await fixtureRoot(t);
+    const identity = planningIdentity();
+    const runtime = await openControlPlane(dataRoot);
+    const { server, client } = await openApi(runtime);
+    t.onTestFinished(async () => {
+      await server.close();
+      await runtime.close();
+    });
+    const hashes = await completeStages(client, source, identity);
+    await writeApproval(source, hashes, mutate);
+
+    await client.submitPlanning({
+      key: `invalid-approval-${fixture.replaceAll(" ", "-")}`,
+      operation: "finalize",
+      expectedVersion: await currentVersion(client),
+      revisionId: identity.revisionId,
+    });
+    const blocked = await waitForRun(client, identity.revisionId, "blocked");
+    assert.equal(blocked.currentStage, "approval");
+    assert.equal(
+      blocked.error?.code,
+      "INVALID_ARTIFACT",
+      blocked.error?.message,
+    );
     assert.equal(blocked.artifact, null);
   });
 }

@@ -22,8 +22,10 @@ import {
   isArtifactStoreError,
 } from "../artifacts/index.js";
 import {
+  assertSafeRelativePath,
   assertSafeSourceFile,
   canonicalizePotentialPath,
+  portablePathKey,
   readFileWithoutFollowingSymlinks,
 } from "../artifacts/paths.js";
 
@@ -53,6 +55,7 @@ export const PlanningRunSchema = z.object({
   revisionId: RevisionIdSchema,
   context: PlanningArtifactContextSchema,
   sourceDirectory: z.string().min(1),
+  supportingFiles: z.array(z.string().min(1)),
   migrationId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,127}$/),
   status: z.enum(["planning", "finalizing", "blocked", "approved"]),
   currentStage: z.enum([
@@ -107,6 +110,7 @@ export const PlanningCommandRequestSchema = z.discriminatedUnion("operation", [
     operation: z.literal("start"),
     context: PlanningArtifactContextSchema,
     sourceDirectory: z.string().min(1),
+    supportingFiles: z.array(z.string().min(1)).optional(),
   }),
   z.object({
     ...PlanningCommandBase,
@@ -217,6 +221,7 @@ export function createPlanningFinalizeTask(artifactStore: ArtifactStore) {
             context: PlanningArtifactContextSchema.parse(run.context),
             revisionId: run.revisionId,
             sourceDirectory: run.sourceDirectory,
+            supportingFiles: [...run.supportingFiles],
             migrationId: run.migrationId,
             expectedHashes: { spec: design.sha256, plan: plan.sha256 },
           };
@@ -364,6 +369,16 @@ export async function submitPlanningCommand(
     };
   }
 
+  let startSourceDirectory: string | undefined;
+  let startSupportingFiles: string[] | undefined;
+  if (input.operation === "start") {
+    startSourceDirectory = canonicalizePotentialPath(input.sourceDirectory);
+    startSupportingFiles = await validateSupportingFiles(
+      startSourceDirectory,
+      input.supportingFiles ?? [],
+    );
+  }
+
   let approvedHash: string | undefined;
   if (input.operation === "approve_gate") {
     if (!SHA256.test(input.expectedSha256))
@@ -402,11 +417,11 @@ export async function submitPlanningCommand(
           "RUN_EXISTS",
           "A planning run already exists for this revision",
         );
-      const sourceDirectory = canonicalizePotentialPath(input.sourceDirectory);
       const run: PlanningRun = {
         revisionId,
         context: PlanningArtifactContextSchema.parse(input.context),
-        sourceDirectory,
+        sourceDirectory: startSourceDirectory!,
+        supportingFiles: startSupportingFiles!,
         migrationId: migrationIdFor(revisionId),
         status: "planning",
         currentStage: "requirements",
@@ -699,6 +714,7 @@ function commandIdentity(input: PlanningCommandRequest): string {
         revisionId: input.revisionId,
         context: input.context,
         sourceDirectory: input.sourceDirectory,
+        supportingFiles: input.supportingFiles ?? [],
       });
     case "open_gate":
       return JSON.stringify({
@@ -728,6 +744,36 @@ function commandIdentity(input: PlanningCommandRequest): string {
         revisionId: input.revisionId,
       });
   }
+}
+
+async function validateSupportingFiles(
+  sourceDirectory: string,
+  supportingFiles: readonly string[],
+): Promise<string[]> {
+  const validated: string[] = [];
+  const keys = new Set<string>();
+  try {
+    for (const supportingFile of supportingFiles) {
+      const safePath = assertSafeRelativePath(supportingFile);
+      const key = portablePathKey(safePath);
+      if (keys.has(key)) {
+        throw new PlanningCommandError(
+          "INVALID_SUPPORTING_FILE",
+          `Duplicate supporting file path: ${safePath}`,
+        );
+      }
+      await assertSafeSourceFile(sourceDirectory, safePath);
+      keys.add(key);
+      validated.push(safePath);
+    }
+  } catch (error) {
+    if (error instanceof PlanningCommandError) throw error;
+    throw new PlanningCommandError(
+      "INVALID_SUPPORTING_FILE",
+      error instanceof Error ? error.message : "Invalid supporting file path",
+    );
+  }
+  return validated;
 }
 
 async function hashStageFile(
