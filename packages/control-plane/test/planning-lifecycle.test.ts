@@ -10,6 +10,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test, vi } from "vitest";
 
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -91,6 +92,7 @@ async function startRun(
   source: string,
   identity: ReturnType<typeof planningIdentity>,
   supportingFiles: readonly string[] = [],
+  sourceDisposition: "preserve" | "retire" = "preserve",
 ): Promise<void> {
   await client.submitPlanning({
     key: `start-${identity.revisionId}`,
@@ -100,6 +102,7 @@ async function startRun(
     context: identity.context,
     sourceDirectory: source,
     supportingFiles: [...supportingFiles],
+    sourceDisposition,
   });
 }
 
@@ -198,6 +201,98 @@ async function waitForRun(
     { timeout: 5_000, interval: 10 },
   );
 }
+
+test("planning defers source retirement before creating durable state", async (t) => {
+  const { dataRoot, source } = await fixtureRoot(t);
+  const identity = planningIdentity();
+  const runtime = await openControlPlane(dataRoot);
+  const { server, client } = await openApi(runtime);
+  t.onTestFinished(async () => {
+    await server.close();
+    await runtime.close();
+  });
+
+  await assert.rejects(
+    startRun(client, source, identity, [], "retire"),
+    (error) =>
+      error instanceof ControlPlaneApiError &&
+      error.status === 422 &&
+      error.code === "SOURCE_RETIREMENT_DEFERRED",
+  );
+  assert.equal(
+    (await client.planningState()).runs[identity.revisionId],
+    undefined,
+  );
+  assert.equal(
+    await readFile(path.join(source, "spec.md"), "utf8"),
+    "# Requirements\n\nR1 approved.\n",
+  );
+});
+
+test("persisted retirement intent blocks without invoking source retirement", async (t) => {
+  const { dataRoot, source } = await fixtureRoot(t);
+  const identity = planningIdentity();
+  let runtime = await openControlPlane(dataRoot);
+  let api = await openApi(runtime);
+  t.onTestFinished(async () => {
+    await api.server.close();
+    await runtime.close();
+  });
+
+  const hashes = await completeStages(api.client, source, identity);
+  await writeApproval(source, hashes);
+  await api.server.close();
+  await runtime.close();
+
+  const database = new DatabaseSync(path.join(dataRoot, "state.sqlite"));
+  const update = database
+    .prepare(
+      `
+      UPDATE document_revisions
+      SET content = replace(
+        content,
+        '"sourceDisposition":"preserve"',
+        '"sourceDisposition":"retire"'
+      )
+      WHERE document_id IN (
+        SELECT id FROM documents WHERE kind = ?
+      )
+    `,
+    )
+    .run(JSON.stringify("kriscard.planning-runs"));
+  database.close();
+  assert.ok(update.changes > 0);
+
+  const artifactStore = createArtifactStore({ root: dataRoot });
+  const retireMigrationSource = vi.spyOn(
+    artifactStore,
+    "retireMigrationSource",
+  );
+  runtime = await openControlPlane(dataRoot, BACKGROUND_CONTEXT, undefined, {
+    artifactStore,
+  });
+  api = await openApi(runtime);
+  assert.equal(
+    (await api.client.planningRun(identity.revisionId)).sourceDisposition,
+    "retire",
+  );
+  await api.client.submitPlanning({
+    key: "finalize-persisted-retirement-intent",
+    operation: "finalize",
+    expectedVersion: await currentVersion(api.client),
+    revisionId: identity.revisionId,
+  });
+
+  const blocked = await waitForRun(api.client, identity.revisionId, "blocked");
+  assert.equal(
+    blocked.error?.code,
+    "SOURCE_RETIREMENT_RECONCILIATION_REQUIRED",
+  );
+  assert.equal(retireMigrationSource.mock.calls.length, 0);
+  assert.ok((await readFile(path.join(source, "spec.md"))).length > 0);
+  assert.ok((await readFile(path.join(source, "plan.md"))).length > 0);
+  assert.ok((await readFile(path.join(source, "approval.md"))).length > 0);
+});
 
 test("planning API enforces Requirements, Design, Plan, and immutable approval in order", async (t) => {
   const { dataRoot, source } = await fixtureRoot(t);
@@ -316,6 +411,9 @@ test("planning API enforces Requirements, Design, Plan, and immutable approval i
     approved.gates.requirements.receipt?.approvedAt ?? "",
     createdAtPattern,
   );
+  assert.ok((await readFile(path.join(source, "spec.md"))).length > 0);
+  assert.ok((await readFile(path.join(source, "plan.md"))).length > 0);
+  assert.ok((await readFile(path.join(source, "approval.md"))).length > 0);
 
   const manifest = await createArtifactStore({ root: dataRoot }).verify({
     kind: "revision",
@@ -441,6 +539,10 @@ test("supporting files persist across restart and finalize without unsafe paths"
     revisionId: identity.revisionId,
   });
   await waitForRun(api.client, identity.revisionId, "approved");
+  assert.equal(
+    await readFile(path.join(source, "notes", "decision.md"), "utf8"),
+    "# Supporting decision\n",
+  );
 
   const store = createArtifactStore({ root: dataRoot });
   const reference = {
@@ -748,6 +850,9 @@ test("restart preserves receipts, reconciles an interrupted review, and resumes 
     "approved",
   );
   assert.equal(approved.artifact?.migrationId, migrationId);
+  assert.ok((await readFile(path.join(source, "spec.md"))).length > 0);
+  assert.ok((await readFile(path.join(source, "plan.md"))).length > 0);
+  assert.ok((await readFile(path.join(source, "approval.md"))).length > 0);
 
   await api.server.close();
   await runtime.close();

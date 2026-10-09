@@ -57,6 +57,7 @@ export const PlanningRunSchema = z.object({
   context: PlanningArtifactContextSchema,
   sourceDirectory: z.string().min(1),
   supportingFiles: z.array(z.string().min(1)),
+  sourceDisposition: z.enum(["preserve", "retire"]).default("preserve"),
   migrationId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,127}$/),
   status: z.enum(["planning", "finalizing", "blocked", "approved"]),
   currentStage: z.enum([
@@ -112,6 +113,7 @@ export const PlanningCommandRequestSchema = z.discriminatedUnion("operation", [
     context: PlanningArtifactContextSchema,
     sourceDirectory: z.string().min(1),
     supportingFiles: z.array(z.string().min(1)).optional(),
+    sourceDisposition: z.enum(["preserve", "retire"]).optional(),
   }),
   z.object({
     ...PlanningCommandBase,
@@ -188,10 +190,12 @@ export const PlanningRuns = defineDoc<PlanningLedger>({
 
 type ArtifactStore = ReturnType<typeof createArtifactStore>;
 type FinalizeInput = { revisionId: RevisionId; migrationId: string };
-type FinalizePhase = { phase: "import"; started: boolean };
+type FinalizePhase =
+  | { phase: "import"; started: boolean }
+  | { phase: "retire"; started: boolean };
 type FinalizeResult = { migrationId: string };
 
-/** Finalization is replay-safe because every retry uses the artifact store's same migration ID. */
+/** Finalization imports idempotently while source retirement remains deferred to T23. */
 export function createPlanningFinalizeTask(artifactStore: ArtifactStore) {
   return defineTask<FinalizeInput, FinalizePhase, FinalizeResult>({
     name: "kriscard.planning.finalize",
@@ -199,8 +203,10 @@ export function createPlanningFinalizeTask(artifactStore: ArtifactStore) {
     initial: () => ({ phase: "import", started: false }),
     phases: {
       import: async (task, runtime, context) => {
-        const wasStarted = task.state.checkpoint.started;
-        let request: Parameters<ArtifactStore["importApprovedRevision"]>[0];
+        let request:
+          | Parameters<ArtifactStore["importApprovedRevision"]>[0]
+          | undefined;
+        let hasDeferredRetirementIntent = false;
         await runtime.commit(async (tx) => {
           const ledger = await tx.doc(PlanningRuns);
           const run = ledger.runs[task.input.revisionId];
@@ -214,47 +220,59 @@ export function createPlanningFinalizeTask(artifactStore: ArtifactStore) {
               "Planning finalization does not match its durable run",
             );
           }
-          const design = run.gates.design.receipt;
-          const plan = run.gates.plan.receipt;
-          if (!design || !plan)
-            throw new Error("Planning finalization is missing approved gates");
-          request = {
-            context: PlanningArtifactContextSchema.parse(run.context),
-            revisionId: run.revisionId,
-            sourceDirectory: run.sourceDirectory,
-            supportingFiles: [...run.supportingFiles],
-            migrationId: run.migrationId,
-            expectedHashes: { spec: design.sha256, plan: plan.sha256 },
-          };
+          hasDeferredRetirementIntent = run.sourceDisposition === "retire";
+          if (!hasDeferredRetirementIntent) {
+            const design = run.gates.design.receipt;
+            const plan = run.gates.plan.receipt;
+            if (!design || !plan)
+              throw new Error(
+                "Planning finalization is missing approved gates",
+              );
+            request = {
+              context: PlanningArtifactContextSchema.parse(run.context),
+              revisionId: run.revisionId,
+              sourceDirectory: run.sourceDirectory,
+              supportingFiles: [...run.supportingFiles],
+              sourceDisposition: "preserve",
+              migrationId: run.migrationId,
+              expectedHashes: { spec: design.sha256, plan: plan.sha256 },
+            };
+          }
           return {
             status: "running",
             checkpoint: { phase: "import", started: true },
           };
         }, context);
 
+        if (hasDeferredRetirementIntent) {
+          await blockFinalization(
+            task.input.revisionId,
+            new PlanningCommandError(
+              "SOURCE_RETIREMENT_RECONCILIATION_REQUIRED",
+              "Planning source retirement is deferred to the approved T23 ownership migration",
+            ),
+            runtime,
+            context,
+          );
+          return;
+        }
+
         try {
           let stored: StoredBundle;
-          if (wasStarted) {
-            try {
-              stored = await artifactStore.resumeMigration(
-                task.input.migrationId,
-              );
-            } catch (error) {
-              if (
-                !isArtifactStoreError(error) ||
-                error.code !== "MIGRATION_CONFLICT" ||
-                !error.message.startsWith("Unknown migration:")
-              )
-                throw error;
-              stored = await artifactStore.importApprovedRevision(request!);
-            }
-          } else {
+          try {
+            stored = await artifactStore.resumeMigration(
+              task.input.migrationId,
+            );
+          } catch (error) {
+            if (
+              !isArtifactStoreError(error) ||
+              error.code !== "MIGRATION_CONFLICT" ||
+              !error.message.startsWith("Unknown migration:")
+            )
+              throw error;
             stored = await artifactStore.importApprovedRevision(request!);
           }
-          if (stored.manifest.kind !== "revision")
-            throw new Error(
-              "Planning finalization stored a non-revision bundle",
-            );
+          assertStoredRevisionMatchesRequest(stored, request!);
           await completeFinalization(
             task.input.revisionId,
             stored,
@@ -271,6 +289,17 @@ export function createPlanningFinalizeTask(artifactStore: ArtifactStore) {
           );
         }
       },
+      retire: async (task, runtime, context) => {
+        await blockFinalization(
+          task.input.revisionId,
+          new PlanningCommandError(
+            "SOURCE_RETIREMENT_RECONCILIATION_REQUIRED",
+            "Persisted planning source retirement requires manual reconciliation before T23",
+          ),
+          runtime,
+          context,
+        );
+      },
     },
     abort: async (task, runtime, context) => {
       await blockFinalization(
@@ -283,6 +312,41 @@ export function createPlanningFinalizeTask(artifactStore: ArtifactStore) {
       );
     },
   });
+}
+
+function assertStoredRevisionMatchesRequest(
+  stored: StoredBundle,
+  request: Parameters<ArtifactStore["importApprovedRevision"]>[0],
+): void {
+  const manifest = stored.manifest;
+  const expectedPaths = [
+    "approval.md",
+    "plan.md",
+    "spec.md",
+    ...(request.supportingFiles ?? []).map(
+      (sourcePath) => `supporting/${sourcePath}`,
+    ),
+  ].sort();
+  const actualPaths = manifest.files.map((file) => file.path).sort();
+  if (
+    manifest.kind !== "revision" ||
+    manifest.revisionId !== request.revisionId ||
+    manifest.context.repositoryFingerprint !==
+      request.context.repositoryFingerprint ||
+    manifest.context.workItemId !== request.context.workItemId ||
+    manifest.context.targetBranch !== request.context.targetBranch ||
+    manifest.context.startingCommit !== request.context.startingCommit ||
+    manifest.context.taskGroup !== request.context.taskGroup ||
+    manifest.context.branch !== request.context.branch ||
+    manifest.context.pullRequest !== request.context.pullRequest ||
+    manifest.approvedHashes.spec !== request.expectedHashes?.spec ||
+    manifest.approvedHashes.plan !== request.expectedHashes?.plan ||
+    JSON.stringify(actualPaths) !== JSON.stringify(expectedPaths)
+  ) {
+    throw new Error(
+      "Stored planning migration does not match its durable finalization request",
+    );
+  }
 }
 
 async function completeFinalization(
@@ -334,7 +398,12 @@ async function blockFinalization(
     run.status = "blocked";
     run.currentStage = "approval";
     run.error = {
-      code: isArtifactStoreError(error) ? error.code : "FINALIZATION_FAILED",
+      code:
+        error instanceof PlanningCommandError
+          ? error.code
+          : isArtifactStoreError(error)
+            ? error.code
+            : "FINALIZATION_FAILED",
       message:
         error instanceof Error
           ? error.message
@@ -356,6 +425,12 @@ export async function submitPlanningCommand(
 ): Promise<{ version: number; taskId?: number }> {
   input = PlanningCommandRequestSchema.parse(input);
   validateCommon(input);
+  if (input.operation === "start" && input.sourceDisposition === "retire") {
+    throw new PlanningCommandError(
+      "SOURCE_RETIREMENT_DEFERRED",
+      "Planning source retirement is unavailable until the approved T23 ownership migration",
+    );
+  }
   const revisionId = input.revisionId;
   const root = await harness.root(context);
   const initialLedger = await harness.snapshot(PlanningRuns, context);
@@ -423,6 +498,7 @@ export async function submitPlanningCommand(
         context: PlanningArtifactContextSchema.parse(input.context),
         sourceDirectory: startSourceDirectory!,
         supportingFiles: startSupportingFiles!,
+        sourceDisposition: "preserve",
         migrationId: migrationIdFor(revisionId),
         status: "planning",
         currentStage: "requirements",
@@ -716,6 +792,7 @@ function commandIdentity(input: PlanningCommandRequest): string {
         context: input.context,
         sourceDirectory: input.sourceDirectory,
         supportingFiles: input.supportingFiles ?? [],
+        sourceDisposition: input.sourceDisposition ?? "preserve",
       });
     case "open_gate":
       return JSON.stringify({
