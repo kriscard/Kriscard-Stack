@@ -92,13 +92,24 @@ export function duplicateSkills(...catalogs) {
     .map(([name, paths]) => ({ name, paths }));
 }
 
+/** @param {string} destination */
+function decodedDestination(destination) {
+  try {
+    return decodeURIComponent(destination);
+  } catch {
+    return destination;
+  }
+}
+
 /** @param {string} repositoryRoot */
 export async function validateModePlaybooks(repositoryRoot) {
   const modeRoot = resolve(repositoryRoot, "skills/dev/kriscard-mode");
   const router = await readFile(resolve(modeRoot, "SKILL.md"), "utf8");
   const destinations = [...router.matchAll(/\]\(([^)\r\n]+)\)/g)]
     .map(([, destination]) => destination.trim())
-    .filter((destination) => destination.includes("playbooks"));
+    .filter((destination) =>
+      decodedDestination(destination).toLowerCase().includes("playbooks"),
+    );
   const invalidDestinations = destinations.filter((destination) => {
     const match = destination.match(/^playbooks\/([a-z-]+)\.md$/);
     return !match || !modePlaybooks.has(match[1]);
