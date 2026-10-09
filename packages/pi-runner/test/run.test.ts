@@ -9,7 +9,12 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import { afterEach, expect, test } from "vitest";
 
-import { defaultStateFile, parseModel, runKriscard } from "../src/run.js";
+import {
+  defaultStateFile,
+  initializeKriscard,
+  parseModel,
+  runKriscard,
+} from "../src/run.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -38,6 +43,26 @@ test("uses one stable state file per working directory", () => {
   expect(defaultStateFile("/tmp/project")).not.toBe(
     defaultStateFile("/tmp/another-project"),
   );
+});
+
+test("initializes a durable conversation before its first prompt", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "kriscard-runner-"));
+  temporaryDirectories.push(directory);
+  const stateFile = join(directory, "agent.sqlite");
+
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+
+  await expect(
+    initializeKriscard({
+      cwd: directory,
+      model: "faux:faux-1",
+      stateFile,
+      models,
+    }),
+  ).resolves.toBeUndefined();
+  await expect(readFile(stateFile)).resolves.not.toHaveLength(0);
 });
 
 test("runs a coding agent through persistent Pi Durable storage", async () => {

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -18,31 +17,47 @@ import {
 } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 
+import { acquireSessionLock, defaultStateFile } from "./session.js";
+
+export { defaultStateFile } from "./session.js";
+
 const context = BACKGROUND_CONTEXT;
-const modeRoot = resolve(
+const repositoryModeRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../../../skills/dev/kriscard-mode",
 );
 
+async function loadMode(): Promise<{ contents: string; root: string }> {
+  const candidates = [
+    repositoryModeRoot,
+    join(homedir(), ".agents", "skills", "kriscard-mode"),
+    join(homedir(), ".pi", "agent", "skills", "kriscard-mode"),
+  ];
+
+  for (const root of candidates) {
+    try {
+      return { contents: await readFile(join(root, "SKILL.md"), "utf8"), root };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  throw new Error(
+    "The kriscard-mode skill is not installed. Run 'kstack setup' first.",
+  );
+}
+
 type Models = ReturnType<typeof builtinModels>;
 
-export type RunOptions = {
-  prompt: string;
+export type SessionOptions = {
   cwd: string;
   model: string;
   stateFile?: string;
   models?: Models;
 };
 
-export function defaultStateFile(cwd: string): string {
-  const dataRoot =
-    process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
-  const project = createHash("sha256")
-    .update(resolve(cwd))
-    .digest("hex")
-    .slice(0, 12);
-  return join(dataRoot, "kriscard-stack", `${project}.sqlite`);
-}
+export type RunOptions = SessionOptions & {
+  prompt: string;
+};
 
 export function parseModel(value: string): {
   provider: string;
@@ -60,12 +75,20 @@ export function parseModel(value: string): {
   };
 }
 
-export async function runKriscard(options: RunOptions): Promise<string> {
+export type KriscardConversation = {
+  submit(prompt: string): Promise<string>;
+  close(): Promise<void>;
+};
+
+export async function openKriscardConversation(
+  options: SessionOptions,
+): Promise<KriscardConversation> {
+  const model = parseModel(options.model);
   const stateFile = options.stateFile ?? defaultStateFile(options.cwd);
   await mkdir(dirname(stateFile), { recursive: true });
 
-  const mode = await readFile(join(modeRoot, "SKILL.md"), "utf8");
-  const instructions = `${mode}\n\n## Runtime\n\nYou are the durable Pi agent for this working directory. Read the selected playbook from ${join(modeRoot, "playbooks")}. General skills are installed under ~/.pi/agent/skills or ~/.agents/skills; read only the skills selected by the playbook. Use the coding tools directly. The Pi Durable harness owns persistence and resume; do not invent another state store, control plane, API, or migration layer.`;
+  const mode = await loadMode();
+  const instructions = `${mode.contents}\n\n## Runtime\n\nYou are the durable Pi agent for this working directory. Read the selected playbook from ${join(mode.root, "playbooks")}. General skills are installed under ~/.pi/agent/skills or ~/.agents/skills; read only the skills selected by the playbook. Before repository work, read the root AGENTS.md when present. Before changing a nested area, check for a closer AGENTS.md; the closest applicable file wins, while the user's explicit request remains higher priority. Never create or modify AGENTS.md as setup. Use the coding tools directly. The Pi Durable harness owns persistence and resume; do not invent another state store, control plane, API, or migration layer.`;
 
   const registry = createRegistry();
   registry.install(CodingTools);
@@ -79,41 +102,77 @@ export async function runKriscard(options: RunOptions): Promise<string> {
   const models = options.models ?? builtinModels();
   const env = ({ cwd = options.cwd }: { readonly cwd?: string }) =>
     new NodeExecutionEnv({ cwd });
-  const storage = await openNodeSqliteStorage(stateFile);
-  const harness = await Harness.open(
-    storage,
-    { models, registry, env },
-    context,
-  );
+  const releaseLock = await acquireSessionLock(stateFile);
 
   try {
-    const root = await harness.root(context, {
-      agent: { model: parseModel(options.model), cwd: options.cwd },
-    });
-    harness.resume();
-
-    const submission = await root.submit(
-      { type: "input", content: options.prompt },
+    const storage = await openNodeSqliteStorage(stateFile);
+    const harness = await Harness.open(
+      storage,
+      { models, registry, env },
       context,
     );
-    const settled = await submission.wait(context);
-    if (settled.status !== "done" || settled.type !== "input") {
-      throw new Error(
-        `Agent did not answer: ${settled.status === "unanswered" ? settled.reason : settled.status}`,
-      );
+    let root;
+    try {
+      root = await harness.root(context, {
+        agent: { model, cwd: options.cwd },
+      });
+      harness.resume();
+    } catch (error) {
+      await harness.close(context);
+      throw error;
     }
 
-    const entry = await root.commit(
-      (transaction) => transaction.entry(AssistantEntry, settled.answer),
-      context,
-    );
-    const answer = entry?.model?.[0] as AssistantMessage | undefined;
-    if (!answer) throw new Error("Agent completed without an assistant answer");
+    return {
+      async submit(prompt: string): Promise<string> {
+        const submission = await root.submit(
+          { type: "input", content: prompt },
+          context,
+        );
+        const settled = await submission.wait(context);
+        if (settled.status !== "done" || settled.type !== "input") {
+          throw new Error(
+            `Agent did not answer: ${settled.status === "unanswered" ? settled.reason : settled.status}`,
+          );
+        }
 
-    return answer.content
-      .flatMap((content) => (content.type === "text" ? [content.text] : []))
-      .join("");
+        const entry = await root.commit(
+          (transaction) => transaction.entry(AssistantEntry, settled.answer),
+          context,
+        );
+        const answer = entry?.model?.[0] as AssistantMessage | undefined;
+        if (!answer) {
+          throw new Error("Agent completed without an assistant answer");
+        }
+        return answer.content
+          .flatMap((content) => (content.type === "text" ? [content.text] : []))
+          .join("");
+      },
+      async close(): Promise<void> {
+        try {
+          await harness.close(context);
+        } finally {
+          await releaseLock();
+        }
+      },
+    };
+  } catch (error) {
+    await releaseLock();
+    throw error;
+  }
+}
+
+export async function initializeKriscard(
+  options: SessionOptions,
+): Promise<void> {
+  const conversation = await openKriscardConversation(options);
+  await conversation.close();
+}
+
+export async function runKriscard(options: RunOptions): Promise<string> {
+  const conversation = await openKriscardConversation(options);
+  try {
+    return await conversation.submit(options.prompt);
   } finally {
-    await harness.close(context);
+    await conversation.close();
   }
 }

@@ -1,10 +1,16 @@
 {
-  "name": "@kriscard/pi-runner",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@kriscard/kstack",
+  "version": "0.1.0",
   "type": "module",
   "bin": {
+    "kstack": "./dist/bin.js",
     "kriscard": "./dist/bin.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "exports": {
     ".": {
