@@ -589,6 +589,22 @@ for (const [fixture, mutate] of [
         "- Plan: Approval not granted",
       ),
   ],
+  [
+    "mixed no-approval-granted stage decision",
+    (approval: string) =>
+      approval.replace(
+        "- Requirements: The previously approved Requirements layer is unchanged.",
+        "- Requirements: Previously approved artifact; no approval was granted for this stage.",
+      ),
+  ],
+  [
+    "mixed approval-not-granted stage decision",
+    (approval: string) =>
+      approval.replace(
+        "- Plan: Plannotator returned `approved` for the current `plan.md`.",
+        "- Plan: Previously approved artifact; approval not granted for this stage.",
+      ),
+  ],
 ] as const) {
   test(`finalization rejects ${fixture} even when artifact hashes match`, async (t) => {
     const { dataRoot, source } = await fixtureRoot(t);

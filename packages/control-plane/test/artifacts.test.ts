@@ -549,6 +549,22 @@ test("rejects incomplete, conflicting, or rejected approval lifecycle metadata",
         ),
     ],
     [
+      "mixed no approval granted",
+      (approval) =>
+        approval.replace(
+          "- Requirements: The previously approved Requirements layer is unchanged.",
+          "- Requirements: Previously approved artifact; no approval was granted for this stage.",
+        ),
+    ],
+    [
+      "mixed approval not granted",
+      (approval) =>
+        approval.replace(
+          "- Plan: Plannotator returned `approved` for the current `plan.md`.",
+          "- Plan: Previously approved artifact; approval not granted for this stage.",
+        ),
+    ],
+    [
       "missing exceptions",
       (approval) => approval.replace(/\n## Exceptions\n\nNone\.\n$/, "\n"),
     ],

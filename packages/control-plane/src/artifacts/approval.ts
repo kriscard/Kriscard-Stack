@@ -108,7 +108,9 @@ function extractStageDecision(markdown: string, stage: string): string {
     /\b(?:rejected|annotated|dismissed|pending|blocked|denied|denial|refused|withheld)\b/i.test(
       decision,
     ) ||
-    /\bnot\b.{0,40}\b(?:approved|approval)\b/i.test(decision)
+    /\bnot\b.{0,40}\b(?:approved|approval)\b/i.test(decision) ||
+    /\bno\b.*\bapproval\b/i.test(decision) ||
+    /\bapproval\b.*\bnot\s+granted\b/i.test(decision)
   ) {
     invalid(`${stage} stage decision must record approval without conflict`);
   }
