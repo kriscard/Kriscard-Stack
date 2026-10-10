@@ -6,7 +6,7 @@ Kriscard Stack is a skill-first engineering workflow with one small Pi Durable r
 
 - `kriscard-mode` routes a request to one playbook.
 - Playbooks compose general-purpose skills from `kriscard/Skills`; never copy them here.
-- `packages/pi-runner` only persists and resumes the Pi coding agent.
+- `packages/pi-runner` owns the thin `kstack` CLI, named Pi Durable conversations, and previewed installation commands.
 - Git, GitHub, project files, and user-approved notes remain the workflow's ordinary sources of truth.
 - Add runtime infrastructure only after a demonstrated workflow failure requires it.
 
@@ -15,5 +15,6 @@ Kriscard Stack is a skill-first engineering workflow with one small Pi Durable r
 ```bash
 pnpm install
 pnpm run check
-pnpm kriscard -- "<request>"
+pnpm run kstack -- --help
+pnpm run kstack -- run "<request>"
 ```
