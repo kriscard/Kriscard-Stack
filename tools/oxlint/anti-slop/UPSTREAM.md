@@ -2,7 +2,7 @@
 
 - Source: https://github.com/dmmulroy/anti-slop
 - Revision: `c44ef22ca116d0ba62a3ff663a0bd13a3f3fa40b`
-- Pristine snapshot: `.agents/skills/install-anti-slop/assets/anti-slop/`
+- Recoverable snapshot: source repository at the pinned revision above
 - Installed entry point: `tools/oxlint/anti-slop/index.ts`
 - Optional Effect entry point: `tools/oxlint/anti-slop/effect/index.ts`
 
