@@ -10,11 +10,7 @@
     {
       "id": "independent-readers-share-checkout",
       "request": "In parallel, inspect authentication risks and audit test coverage without changing files.",
-      "expect": [
-        "two read-only workers",
-        "shared checkout allowed",
-        "fan-out proposal"
-      ]
+      "expect": ["two read-only workers", "shared checkout allowed", "fan-out proposal"]
     },
     {
       "id": "independent-writers-use-worktrees",
@@ -62,11 +58,7 @@
     {
       "id": "targeted-update-only",
       "request": "A discovery changes only worker A's dependency path.",
-      "expect": [
-        "amend worker A only",
-        "no transcript broadcast",
-        "goal unchanged"
-      ]
+      "expect": ["amend worker A only", "no transcript broadcast", "goal unchanged"]
     },
     {
       "id": "bounded-worker-context",
@@ -80,20 +72,12 @@
     {
       "id": "bounded-synthesis",
       "request": "Collect two completed worker results.",
-      "expect": [
-        "result packets",
-        "repository evidence",
-        "no imported transcripts"
-      ]
+      "expect": ["result packets", "repository evidence", "no imported transcripts"]
     },
     {
       "id": "exact-revision-verification",
       "request": "Verify combined mutating output whose head changed after the worker reported completion.",
-      "expect": [
-        "fresh verifier",
-        "changed revision is stale",
-        "no pass for prior SHA"
-      ]
+      "expect": ["fresh verifier", "changed revision is stale", "no pass for prior SHA"]
     }
   ]
 }
