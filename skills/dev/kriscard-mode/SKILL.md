@@ -37,8 +37,8 @@ merging.
 
 ## Durable execution
 
-When Pi Durable runs this skill, its conversation and tool work already survive restart. Continue from
-that committed state. Do not create another control plane, workflow database, artifact store, API, or
+Pi owns the conversation, tool work, persistence, resume, branching, and compaction. Continue from
+that session state. Do not create another control plane, workflow database, artifact store, API, or
 migration system.
 
 Git, GitHub, project files, tests, and user-approved notes remain the ordinary sources of truth.

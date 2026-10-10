@@ -5,7 +5,7 @@ description: Coordinate independent Kstack outcomes through Herdr with fresh nam
 
 # Kstack Orchestrator
 
-Coordinate bounded workers; keep execution authority in Pi Durable, Herdr, and Git.
+Coordinate bounded workers; keep execution authority in Pi, Herdr, and Git.
 
 ## 1. Prove delegation helps
 
@@ -60,12 +60,12 @@ Before launch, read [Worker contracts](references/worker-contracts.md).
 
 For each approved worker:
 
-1. choose a unique Herdr-safe worker name and a unique lowercase Kstack session name;
+1. choose a unique Herdr-safe worker name and a unique lowercase Pi session ID;
 2. preserve the current checkout for read-only work;
 3. ask Herdr for the approved distinct worktree and branch for a writer;
-4. start an interactive `kstack --session <name>` process in that exact directory through the pane surface described by the live Herdr skill;
+4. start an interactive `kstack --session-id <id> --name <worker-name>` process in that exact directory through the pane surface described by the live Herdr skill;
 5. create a unique completion marker for this task that is absent from current pane output;
-6. record the worker name, Kstack session, Herdr IDs, cwd, worktree, branch, starting commit, classification, goal, and marker in the parent's durable conversation;
+6. record the worker name, Pi session ID, Herdr IDs, cwd, worktree, branch, starting commit, classification, goal, and marker in the parent's Pi session;
 7. send only that worker's task packet.
 
 A worker reads the root and nearest applicable `AGENTS.md`, loads only its selected playbook and skills, inspects its assigned repository surface, and stops on a task or design departure. It does not coordinate sibling workers.
@@ -76,7 +76,7 @@ Complete when every live worker is mapped to one approved outcome and every writ
 
 ## 5. Observe without model polling
 
-Use Herdr's mechanical wait and read operations. Do not ask the parent model repeatedly whether a worker is finished. Wait for the task's unique completion marker rather than a reusable Kstack prompt already present in scrollback. A marker means the response reached its required ending; inspect the result packet and repository evidence before treating the task as complete. Let Pi Durable use its supported conversation compaction; do not replace it with a Kstack summary or transcript database.
+Use Herdr's mechanical wait and read operations. Do not ask the parent model repeatedly whether a worker is finished. Wait for the task's unique completion marker rather than a reusable Kstack prompt already present in scrollback. A marker means the response reached its required ending; inspect the result packet and repository evidence before treating the task as complete. Let Pi use its supported conversation compaction; do not replace it with a Kstack summary or transcript database.
 
 - A targeted discovery goes only to affected workers as a small amendment to their packet.
 - Steering changes tactics inside the accepted goal; a scope, behavior, design, dependency, or ownership change stops the worker and returns to the user or planning.

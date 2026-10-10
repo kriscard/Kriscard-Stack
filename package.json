@@ -2,7 +2,7 @@
   "name": "kriscard-stack",
   "version": "0.0.0",
   "private": true,
-  "description": "Skill-first engineering workflows with a durable Pi agent.",
+  "description": "Skill-first engineering workflows launched through native Pi.",
   "type": "module",
   "scripts": {
     "build": "pnpm --filter @kriscard/kstack build",

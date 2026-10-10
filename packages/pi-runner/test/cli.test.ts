@@ -4,7 +4,9 @@ import { expect, test, vi } from "vitest";
 
 import { main, parseCommand } from "../src/cli.js";
 import type { CommandRunner } from "../src/installer.js";
-import type { openKriscardConversation, runKriscard } from "../src/run.js";
+import type { PiRunner } from "../src/launcher.js";
+
+const MODE_PATH = "/skills/kriscard-mode";
 
 type OutputBuffer = {
   stream: Writable;
@@ -25,105 +27,65 @@ function outputBuffer(): OutputBuffer {
   };
 }
 
-test("parses the documented command surface", () => {
-  expect(parseCommand([])).toEqual({
-    type: "interactive",
-    session: "default",
-    existence: "any",
+test("parses native Pi and Kstack management commands", () => {
+  expect(parseCommand([])).toEqual({ type: "pi", arguments: [], print: false });
+  expect(parseCommand(["--continue"])).toEqual({
+    type: "pi",
+    arguments: ["--continue"],
+    print: false,
   });
-  expect(parseCommand(["--session", "checkout"])).toEqual({
-    type: "interactive",
-    session: "checkout",
-    existence: "any",
+  expect(parseCommand(["run", "Build", "it"])).toEqual({
+    type: "pi",
+    arguments: ["Build", "it"],
+    print: true,
   });
-  expect(parseCommand(["run", "--session", "checkout", "fix", "it"])).toEqual({
-    type: "run",
-    session: "checkout",
-    prompt: "fix it",
-  });
-  expect(parseCommand(["legacy", "request"])).toEqual({
-    type: "run",
-    session: "default",
-    prompt: "legacy request",
-  });
-  expect(parseCommand(["new", "checkout"])).toEqual({
-    type: "interactive",
-    session: "checkout",
-    existence: "must-not-exist",
-  });
-  expect(parseCommand(["resume", "checkout"])).toEqual({
-    type: "interactive",
-    session: "checkout",
-    existence: "must-exist",
-  });
-  expect(parseCommand(["remove", "checkout", "--yes"])).toEqual({
-    type: "remove",
-    session: "checkout",
-    yes: true,
-  });
+  expect(parseCommand(["setup", "--yes"])).toEqual({ type: "setup", yes: true });
+  expect(parseCommand(["update"])).toEqual({ type: "update", yes: false });
 });
 
-test("submits one-shot requests to the selected durable session", async () => {
+test("opens native Pi with Kriscard mode", async () => {
   const output = outputBuffer();
   const error = outputBuffer();
-  const runAgent = vi.fn<typeof runKriscard>(async () => "Done.");
+  const runPi = vi.fn<PiRunner>(async () => 0);
 
   await expect(
-    main(["run", "--session", "checkout", "Fix", "it"], {
+    main([], {
       cwd: "/tmp/project",
-      model: "faux:faux-1",
       input: Readable.from([]),
       output: output.stream,
       error: error.stream,
-      runAgent,
+      modePath: MODE_PATH,
+      runPi,
     }),
   ).resolves.toBe(0);
 
-  expect(runAgent).toHaveBeenCalledWith(
-    expect.objectContaining({
-      prompt: "Fix it",
-      cwd: "/tmp/project",
-      model: "faux:faux-1",
-      stateFile: expect.stringMatching(/checkout\.sqlite$/),
-    }),
+  expect(runPi).toHaveBeenCalledWith(
+    expect.arrayContaining(["--skill", MODE_PATH, "--append-system-prompt"]),
+    "/tmp/project",
   );
-  expect(output.read()).toBe("Done.\n");
   expect(error.read()).toBe("");
 });
 
-test("keeps multiple interactive turns in one named session", async () => {
+test("uses native Pi print mode for one-shot requests", async () => {
   const output = outputBuffer();
   const error = outputBuffer();
-  const submit = vi.fn(async (prompt: string) => `Answer: ${prompt}`);
-  const close = vi.fn(async () => undefined);
-
-  const openConversation = vi.fn<typeof openKriscardConversation>(async () => ({
-    submit,
-    close,
-  }));
+  const runPi = vi.fn<PiRunner>(async () => 0);
 
   await expect(
-    main(["--session", "checkout"], {
+    main(["run", "Build", "it"], {
       cwd: "/tmp/project",
-      model: "faux:faux-1",
-      input: Readable.from(["first\nsecond\nexit\n"]),
+      input: Readable.from([]),
       output: output.stream,
       error: error.stream,
-      openConversation,
+      modePath: MODE_PATH,
+      runPi,
     }),
   ).resolves.toBe(0);
 
-  expect(openConversation).toHaveBeenCalledOnce();
-  expect(openConversation).toHaveBeenCalledWith(
-    expect.objectContaining({
-      stateFile: expect.stringMatching(/checkout\.sqlite$/),
-      existence: "any",
-    }),
+  expect(runPi).toHaveBeenCalledWith(
+    expect.arrayContaining(["--print", "Build", "it"]),
+    "/tmp/project",
   );
-  expect(submit).toHaveBeenNthCalledWith(1, "first");
-  expect(submit).toHaveBeenNthCalledWith(2, "second");
-  expect(close).toHaveBeenCalledOnce();
-  expect(output.read()).toContain("Answer: first\nAnswer: second\n");
   expect(error.read()).toBe("");
 });
 
