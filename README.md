@@ -128,6 +128,25 @@ Before repository work, Kstack agents read the root `AGENTS.md` when present. Be
 
 Kstack consumes these files from the active checkout. Setup and session management never create or modify them.
 
+## Orchestration
+
+Single-agent execution remains the default. `kriscard-mode` selects `kstack-orchestrator` only for explicitly requested or genuinely independent outcomes.
+
+The orchestrator:
+
+- proposes the worker goals and topology before consequential fan-out;
+- normally starts no more than two implementation workers;
+- loads the authoritative installed `herdr` skill and discovers the live CLI contract;
+- gives each worker a fresh named Kstack session and one bounded task packet;
+- allows read-only workers to share a checkout;
+- requires distinct Herdr-managed worktrees and branches for parallel writers;
+- waits, reads, steers, and stops workers through Herdr rather than model polling;
+- preserves a crashed worker's durable session and worktree without automatically restarting it;
+- summarizes bounded result packets rather than copying worker transcripts;
+- uses a fresh verifier tied to the exact commit or diff before claiming combined mutating work is ready.
+
+Kstack does not copy the Herdr skill or add a task database, process supervisor, scheduler, runtime adapter, or automatic merge path. Integration, merge, release, branch deletion, and worktree cleanup remain explicit user decisions.
+
 ## Rollback
 
 Package and skill installation remain owned by their existing tools:

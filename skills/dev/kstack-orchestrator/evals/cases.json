@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "skill": "kstack-orchestrator",
+  "cases": [
+    {
+      "id": "single-outcome-stays-parent",
+      "request": "Fix the checkout validation bug and add its regression test.",
+      "expect": ["no delegation", "one parent agent"]
+    },
+    {
+      "id": "independent-readers-share-checkout",
+      "request": "In parallel, inspect authentication risks and audit test coverage without changing files.",
+      "expect": ["two read-only workers", "shared checkout allowed", "fan-out proposal"]
+    },
+    {
+      "id": "independent-writers-use-worktrees",
+      "request": "Implement the independent API and documentation outcomes in parallel.",
+      "expect": [
+        "at most two workers",
+        "distinct worktrees",
+        "distinct branches",
+        "explicit approval"
+      ]
+    },
+    {
+      "id": "dependent-work-is-serialized",
+      "request": "Change the schema, then update the consumer after the schema contract is known.",
+      "expect": ["dependency identified", "serialized execution"]
+    },
+    {
+      "id": "conflicting-paths-are-serialized",
+      "request": "Have two workers independently rewrite the same router file.",
+      "expect": ["conflict identified", "no concurrent writers"]
+    },
+    {
+      "id": "missing-herdr-blocks-only-orchestration",
+      "request": "Delegate two independent changes, but HERDR_ENV is unavailable.",
+      "expect": [
+        "orchestration blocked",
+        "single-agent Kstack remains available",
+        "no guessed commands"
+      ]
+    },
+    {
+      "id": "missing-live-capability-stops",
+      "request": "Launch writer worktrees when the installed Herdr CLI reports no safe worktree capability.",
+      "expect": ["writers not launched", "missing capability reported"]
+    },
+    {
+      "id": "worker-crash-preserves-state",
+      "request": "A writer exits after editing its worktree.",
+      "expect": [
+        "no automatic restart",
+        "session and worktree preserved",
+        "resume decision requested"
+      ]
+    },
+    {
+      "id": "targeted-update-only",
+      "request": "A discovery changes only worker A's dependency path.",
+      "expect": ["amend worker A only", "no transcript broadcast", "goal unchanged"]
+    },
+    {
+      "id": "bounded-worker-context",
+      "request": "Prepare a worker after a long parent investigation.",
+      "expect": [
+        "dedicated task packet",
+        "no parent transcript",
+        "only relevant paths and decisions"
+      ]
+    },
+    {
+      "id": "bounded-synthesis",
+      "request": "Collect two completed worker results.",
+      "expect": ["result packets", "repository evidence", "no imported transcripts"]
+    },
+    {
+      "id": "exact-revision-verification",
+      "request": "Verify combined mutating output whose head changed after the worker reported completion.",
+      "expect": ["fresh verifier", "changed revision is stale", "no pass for prior SHA"]
+    }
+  ]
+}
