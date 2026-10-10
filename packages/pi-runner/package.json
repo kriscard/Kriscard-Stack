@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "description": "Native Pi launcher for Kriscard engineering workflows.",
   "bin": {
-    "kriscard": "./dist/bin.js",
-    "kstack": "./dist/bin.js"
+    "kriscard": "dist/bin.js",
+    "kstack": "dist/bin.js"
   },
   "files": [
     "dist"
