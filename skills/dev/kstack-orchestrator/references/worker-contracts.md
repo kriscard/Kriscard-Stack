@@ -2,7 +2,7 @@
 
 # Worker contracts
 
-These are bounded Markdown handoffs carried by separate Pi Durable conversations. They are not schemas, protocol messages, or a second task store.
+These are bounded Markdown handoffs carried by separate Pi sessions. They are not schemas, protocol messages, or a second task store.
 
 ## Task packet
 

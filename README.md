@@ -1,12 +1,12 @@
 # Kriscard Stack
 
-Kriscard Stack is a skill-first engineering workflow with durable Pi conversations.
+Kriscard Stack is a skill-first engineering workflow for Pi.
 
-`kriscard-mode` chooses one playbook, the playbook composes installed skills, and a small CLI runs the work through Pi Durable. Git, GitHub, project files, and user-approved notes remain the ordinary sources of truth.
+`kstack` opens native Pi with `kriscard-mode` enabled. The mode chooses one playbook, and the playbook composes installed skills. Pi owns the terminal UI, tools, project instructions, conversations, persistence, and resume behavior. Git, GitHub, project files, and user-approved notes remain the ordinary sources of truth.
 
 ```text
-request
-  → named Pi Durable conversation
+kstack
+  → native Pi session
     → kriscard-mode
       → one playbook
         → installed skills
@@ -19,7 +19,7 @@ Kstack has no custom control plane, task database, HTTP API, dashboard, artifact
 
 - macOS
 - Node.js 24 or newer
-- credentials for a tool-capable model supported by `@earendil-works/pi-ai`
+- Pi installed and authenticated
 - `npx` for bootstrap and the Skills CLI
 
 Herdr is optional. Ordinary single-agent Kstack works without its CLI.
@@ -61,66 +61,44 @@ Update the CLI and rediscover every current skill from the trusted sources with:
 kstack update
 ```
 
-## Model
-
-Choose a provider-qualified model:
-
-```bash
-export KRISCARD_MODEL="anthropic:claude-sonnet-4-6"
-```
-
 ## Run
 
-Open the default interactive session:
+Open native Pi with Kriscard mode enabled:
 
 ```bash
 kstack
 ```
 
-Open or create a named interactive session:
+Then enter an ordinary engineering request:
 
-```bash
-kstack --session checkout
+```text
+Build a feature that adds CSV export to the reports page.
 ```
 
-Submit one request and exit:
+Kstack passes native Pi options through, so Pi's session workflow remains available:
 
 ```bash
-kstack run --session checkout "Fix the failing checkout test"
+kstack --continue
+kstack --resume
+kstack --name "CSV export"
+kstack --session-id csv-export
 ```
 
-The former command remains available as an alias, including its one-shot form:
+Submit one non-interactive request with Pi's print mode:
 
 ```bash
-kriscard "Fix the failing checkout test"
+kstack run "Fix the failing checkout test"
 ```
+
+`kriscard` remains an alias for `kstack`.
+
+Pi selects its configured default model. `KRISCARD_MODEL=<provider>:<model-id>` remains available as an explicit launcher override.
 
 ## Sessions
 
-Sessions are scoped to the canonical working directory:
+Pi owns session storage, naming, resume, branching, compaction, and deletion. Inside Pi, use `/new`, `/resume`, `/name`, `/session`, `/tree`, `/fork`, and `/compact`. From the shell, use native options such as `--continue`, `--resume`, `--session`, `--session-id`, and `--name` through `kstack`.
 
-```text
-${XDG_DATA_HOME:-$HOME/.local/share}/kriscard-stack/<project-hash>/<session>.sqlite
-```
-
-Manage sessions from the project they belong to:
-
-```bash
-kstack list
-kstack new checkout
-kstack resume checkout
-kstack remove checkout
-```
-
-- `new` fails when the name already exists.
-- `resume` fails when it does not exist.
-- `remove` previews the exact database and requires confirmation; `--yes` is available for reviewed automation.
-- names use lowercase letters, numbers, dots, underscores, and hyphens.
-- one process owns a session lease at a time; opening and removal use the same lease.
-- the small `.lease` coordination file is retained after removal so future openers cannot race destructive cleanup.
-- removing the CLI or skills never removes durable sessions.
-
-If a project has a state file from the original one-conversation runner, its default session continues using that file. Kstack does not silently fork, move, or delete it.
+Legacy Kstack SQLite session files are not migrated or deleted automatically.
 
 ## Repository instructions
 
@@ -137,7 +115,7 @@ The orchestrator:
 - proposes the worker goals and topology before consequential fan-out;
 - normally starts no more than two implementation workers;
 - loads the authoritative installed `herdr` skill and discovers the live CLI contract;
-- gives each worker a fresh named Kstack session and one bounded task packet;
+- gives each worker a fresh named Pi session and one bounded task packet;
 - allows read-only workers to share a checkout;
 - requires distinct Herdr-managed worktrees and branches for parallel writers;
 - waits, reads, steers, and stops workers through Herdr rather than model polling;
@@ -158,7 +136,7 @@ npx skills remove kriscard/Kriscard-Stack
 npx skills remove herdrdev/herdr
 ```
 
-Review removal prompts before confirming. Durable SQLite sessions and Git worktrees are retained.
+Review removal prompts before confirming. Pi sessions, legacy Kstack SQLite files, and Git worktrees are retained.
 
 ## Development
 
@@ -172,4 +150,4 @@ Repository layout:
 
 - `skills/dev/kriscard-mode/` — workflow router and playbooks
 - `skills/dev/principle-*/` — optional engineering principles
-- `packages/pi-runner/` — publishable Kstack CLI and thin Pi Durable runner
+- `packages/pi-runner/` — publishable Kstack CLI and native Pi launcher

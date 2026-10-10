@@ -1,17 +1,17 @@
 # Kriscard Stack
 
-Canonical language for the durable engineering workflow exposed by Kstack.
+Canonical language for the skill-first engineering workflow exposed by Kstack.
 
 ## Language
 
-**Kstack project**:
-The canonical working directory that scopes a set of Kstack sessions.
-_Avoid_: Repository, workspace, project hash
+**Kstack launcher**:
+The `kstack` command that opens native Pi with Kriscard mode enabled.
+_Avoid_: Agent runtime, control plane, Pi replacement
 
-**Kstack session**:
-A named durable Pi conversation belonging to one Kstack project.
-_Avoid_: Agent, task, thread
+**Kriscard mode**:
+The routing skill that selects exactly one engineering playbook for the user's requested outcome.
+_Avoid_: Agent, workflow engine, scheduler
 
-**Session lease**:
-Exclusive live ownership required to open or remove a Kstack session. It ends when the owning process closes or exits.
-_Avoid_: Lock file, PID lock
+**Pi session**:
+A conversation created, persisted, named, resumed, branched, compacted, and deleted by Pi.
+_Avoid_: Kstack session, Kstack database

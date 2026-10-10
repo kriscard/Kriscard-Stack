@@ -1,11 +1,13 @@
 # @kriscard/kstack
 
-Thin CLI for named Pi Durable engineering conversations and trusted Kriscard skill setup.
+Thin native Pi launcher with Kriscard mode enabled, plus trusted Kriscard skill setup.
 
 ```bash
 npx @kriscard/kstack setup
-export KRISCARD_MODEL="anthropic:claude-sonnet-4-6"
+cd /path/to/project
 kstack
 ```
 
-See the [Kriscard Stack repository](https://github.com/kriscard/Kriscard-Stack) for installation behavior, session commands, security boundaries, and development instructions.
+Enter an ordinary engineering request in Pi. `kriscard-mode` selects one playbook and composes the installed skills that fit the work. Pi retains ownership of its terminal UI, tools, project instructions, sessions, and resume behavior.
+
+See the [Kriscard Stack repository](https://github.com/kriscard/Kriscard-Stack) for installation behavior, native Pi options, security boundaries, and development instructions.
