@@ -1,22 +1,22 @@
 {
   "name": "@kriscard/kstack",
   "version": "0.1.0",
-  "type": "module",
   "bin": {
-    "kstack": "./dist/bin.js",
-    "kriscard": "./dist/bin.js"
+    "kriscard": "./dist/bin.js",
+    "kstack": "./dist/bin.js"
   },
   "files": [
     "dist"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
+  "type": "module",
   "exports": {
     ".": {
       "types": "./dist/run.d.ts",
       "import": "./dist/run.js"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

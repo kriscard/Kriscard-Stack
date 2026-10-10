@@ -8,19 +8,18 @@ import {
   type CommandRunner,
   runCommand,
 } from "./installer.js";
-import { openKriscardConversation, runKriscard } from "./run.js";
+import { openKriscardConversation, runKriscard, type SessionExistence } from "./run.js";
 import {
   DEFAULT_SESSION,
   listSessions,
   removeSession,
   selectedStateFile,
-  sessionExists,
   validateSessionName,
 } from "./session.js";
 
 export type CliCommand =
   | { type: "help" }
-  | { type: "interactive"; session: string; requireExisting: boolean }
+  | { type: "interactive"; session: string; existence: SessionExistence }
   | { type: "run"; session: string; prompt: string }
   | { type: "list" }
   | { type: "remove"; session: string; yes: boolean }
@@ -51,12 +50,16 @@ The compatibility command 'kriscard "<request>"' remains available.`;
 
 function optionValue(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
+
   if (index === -1) return undefined;
   const value = args[index + 1];
+
   if (!value || value.startsWith("--")) {
     throw new Error(`${name} requires a value`);
   }
+
   args.splice(index, 2);
+
   return value;
 }
 
@@ -66,8 +69,10 @@ function sessionOption(args: string[]): string {
 
 function yesOption(args: string[]): boolean {
   const index = args.indexOf("--yes");
+
   if (index === -1) return false;
   args.splice(index, 1);
+
   return true;
 }
 
@@ -77,69 +82,87 @@ function remaining(args: string[]): string[] {
 
 export function parseCommand(argv: readonly string[]): CliCommand {
   const args = [...argv];
+
   if (args.length === 0) {
     return {
       type: "interactive",
       session: DEFAULT_SESSION,
-      requireExisting: false,
+      existence: "any",
     };
   }
+
   if (args.includes("--help") || args.includes("-h")) return { type: "help" };
+
   if (args[0] === "--session") {
     const session = sessionOption(args);
+
     if (remaining(args).length) throw new Error("Unexpected arguments");
-    return { type: "interactive", session, requireExisting: false };
+
+    return { type: "interactive", session, existence: "any" };
   }
 
   const command = args.shift();
+
   if (command === "run") {
     const session = sessionOption(args);
     const prompt = remaining(args).join(" ").trim();
+
     if (!prompt) throw new Error("run requires a request");
+
     return { type: "run", session, prompt };
   }
+
   if (command === "list") {
     if (args.length) throw new Error("list does not accept arguments");
+
     return { type: "list" };
   }
+
   if (command === "new" || command === "resume") {
     const session = args.shift();
-    if (!session || args.length)
-      throw new Error(`${command} requires one name`);
+
+    if (!session || args.length) throw new Error(`${command} requires one name`);
+
     return {
       type: "interactive",
       session: validateSessionName(session),
-      requireExisting: command === "resume",
+      existence: command === "resume" ? "must-exist" : "must-not-exist",
     };
   }
+
   if (command === "remove") {
     const yes = yesOption(args);
     const session = args.shift();
+
     if (!session || args.length) throw new Error("remove requires one name");
+
     return { type: "remove", session: validateSessionName(session), yes };
   }
+
   if (command === "setup" || command === "update") {
     const yes = yesOption(args);
-    if (args.length)
-      throw new Error(`${command} does not accept other arguments`);
+
+    if (args.length) throw new Error(`${command} does not accept other arguments`);
+
     return { type: command, yes };
   }
 
   const prompt = [command, ...remaining(args)].join(" ").trim();
+
   if (!prompt) throw new Error("A request is required");
+
   return { type: "run", session: DEFAULT_SESSION, prompt };
 }
 
-async function confirm(
-  question: string,
-  dependencies: CliDependencies,
-): Promise<boolean> {
+async function confirm(question: string, dependencies: CliDependencies): Promise<boolean> {
   const readline = createInterface({
     input: dependencies.input,
     output: dependencies.output,
   });
+
   try {
     const answer = await readline.question(`${question} [y/N] `);
+
     return /^(?:y|yes)$/i.test(answer.trim());
   } finally {
     readline.close();
@@ -164,26 +187,30 @@ async function submit(
     model: requireModel(dependencies),
     stateFile: selectedStateFile(dependencies.cwd, session),
   });
+
   dependencies.output.write(`${answer}\n`);
 }
 
 async function interactive(
   session: string,
+  existence: SessionExistence,
   dependencies: CliDependencies,
 ): Promise<void> {
   const conversation = await dependencies.openConversation({
     cwd: dependencies.cwd,
     model: requireModel(dependencies),
     stateFile: selectedStateFile(dependencies.cwd, session),
+    existence,
   });
+
   const readline = createInterface({
     input: dependencies.input,
     output: dependencies.output,
     terminal: Boolean(dependencies.input.isTTY),
   });
-  dependencies.output.write(
-    `Kstack session '${session}'. Type 'exit' or press Ctrl-D to leave.\n`,
-  );
+
+  dependencies.output.write(`Kstack session '${session}'. Type 'exit' or press Ctrl-D to leave.\n`);
+
   if (dependencies.input.isTTY) {
     readline.setPrompt("kstack> ");
     readline.prompt();
@@ -192,10 +219,13 @@ async function interactive(
   try {
     for await (const line of readline) {
       const prompt = line.trim();
+
       if (/^(?:exit|quit)$/i.test(prompt)) break;
+
       if (prompt) {
         dependencies.output.write(`${await conversation.submit(prompt)}\n`);
       }
+
       if (dependencies.input.isTTY) readline.prompt();
     }
   } finally {
@@ -221,27 +251,28 @@ export async function main(
 
   try {
     const command = parseCommand(argv);
+
     if (command.type === "help") {
       resolved.output.write(`${help}\n`);
+
       return 0;
     }
+
     if (command.type === "run") {
       await submit(command.prompt, command.session, resolved);
+
       return 0;
     }
+
     if (command.type === "interactive") {
-      const exists = sessionExists(resolved.cwd, command.session);
-      if (command.requireExisting && !exists) {
-        throw new Error(`Session '${command.session}' does not exist`);
-      }
-      if (!command.requireExisting && argv[0] === "new" && exists) {
-        throw new Error(`Session '${command.session}' already exists`);
-      }
-      await interactive(command.session, resolved);
+      await interactive(command.session, command.existence, resolved);
+
       return 0;
     }
+
     if (command.type === "list") {
       const sessions = await listSessions(resolved.cwd);
+
       if (!sessions.length) {
         resolved.output.write("No sessions for this project.\n");
       } else {
@@ -251,19 +282,25 @@ export async function main(
           );
         }
       }
+
       return 0;
     }
+
     if (command.type === "remove") {
       const path = selectedStateFile(resolved.cwd, command.session);
       resolved.output.write(
-        `Remove session '${command.session}':\n  ${path}\n  ${path}-shm\n  ${path}-wal\n  ${path}.lock\n`,
+        `Remove session '${command.session}':\n  ${path}\n  ${path}-shm\n  ${path}-wal\n\nThe persistent coordination lease is retained for safe future reuse.\n`,
       );
+
       if (!command.yes && !(await confirm("Continue?", resolved))) {
         resolved.output.write("Cancelled.\n");
+
         return 0;
       }
+
       const removed = await removeSession(resolved.cwd, command.session);
       resolved.output.write(`Removed ${removed.length} file(s).\n`);
+
       return 0;
     }
 
@@ -271,27 +308,24 @@ export async function main(
     resolved.output.write(
       `${formatSetupPlan(plan, command.type === "setup" ? "Setup" : "Update")}\n`,
     );
+
     if (plan.conflicts.length) {
       throw new Error("Setup cannot continue with skill ownership conflicts");
     }
-    if (
-      !command.yes &&
-      !(await confirm("Apply these global changes?", resolved))
-    ) {
+
+    if (!command.yes && !(await confirm("Apply these global changes?", resolved))) {
       resolved.output.write("Cancelled.\n");
+
       return 0;
     }
-    await applySetupPlan(plan, resolved.commandRunner, (value) =>
-      resolved.output.write(value),
-    );
-    resolved.output.write(
-      `${command.type === "setup" ? "Setup" : "Update"} complete.\n`,
-    );
+
+    await applySetupPlan(plan, resolved.commandRunner, (value) => resolved.output.write(value));
+    resolved.output.write(`${command.type === "setup" ? "Setup" : "Update"} complete.\n`);
+
     return 0;
   } catch (error) {
-    resolved.error.write(
-      `${error instanceof Error ? error.message : String(error)}\n`,
-    );
+    resolved.error.write(`${error instanceof Error ? error.message : String(error)}\n`);
+
     return 1;
   }
 }

@@ -1,10 +1,12 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
-import { open, readFile, readdir, rm, stat } from "node:fs/promises";
+import { readdir, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 export const DEFAULT_SESSION = "default";
+
 const SESSION_NAME = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/;
 
 export type SessionInfo = {
@@ -20,6 +22,7 @@ export function dataRoot(): string {
 
 export function canonicalProjectPath(cwd: string): string {
   const absolute = resolve(cwd);
+
   try {
     return realpathSync.native(absolute);
   } catch {
@@ -37,6 +40,7 @@ export function validateSessionName(name: string): string {
       "Session names must be 1-64 lowercase letters, numbers, dots, underscores, or hyphens, and must start and end with a letter or number",
     );
   }
+
   return name;
 }
 
@@ -49,14 +53,20 @@ export function defaultStateFile(
   session = DEFAULT_SESSION,
   root = dataRoot(),
 ): string {
-  return join(
-    projectStateDirectory(cwd, root),
-    `${validateSessionName(session)}.sqlite`,
-  );
+  return join(projectStateDirectory(cwd, root), `${validateSessionName(session)}.sqlite`);
 }
 
 export function legacyStateFile(cwd: string, root = dataRoot()): string {
   return join(root, "kriscard-stack", `${projectHash(resolve(cwd))}.sqlite`);
+}
+
+function legacyStateFiles(cwd: string, root: string): string[] {
+  const paths = [
+    legacyStateFile(cwd, root),
+    join(root, "kriscard-stack", `${projectHash(canonicalProjectPath(cwd))}.sqlite`),
+  ];
+
+  return [...new Set(paths)];
 }
 
 export function selectedStateFile(
@@ -65,24 +75,19 @@ export function selectedStateFile(
   root = dataRoot(),
 ): string {
   const current = defaultStateFile(cwd, session, root);
+
   if (session !== DEFAULT_SESSION || existsSync(current)) return current;
 
-  const legacy = legacyStateFile(cwd, root);
-  return existsSync(legacy) ? legacy : current;
+  const legacy = legacyStateFiles(cwd, root).filter((path) => existsSync(path));
+
+  if (legacy.length > 1) {
+    throw new Error(`Multiple legacy default sessions match this project:\n${legacy.join("\n")}`);
+  }
+
+  return legacy[0] ?? current;
 }
 
-export function sessionExists(
-  cwd: string,
-  session: string,
-  root = dataRoot(),
-): boolean {
-  return existsSync(selectedStateFile(cwd, session, root));
-}
-
-export async function listSessions(
-  cwd: string,
-  root = dataRoot(),
-): Promise<SessionInfo[]> {
+export async function listSessions(cwd: string, root = dataRoot()): Promise<SessionInfo[]> {
   const directory = projectStateDirectory(cwd, root);
   const sessions: SessionInfo[] = [];
 
@@ -90,102 +95,100 @@ export async function listSessions(
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       if (!entry.isFile() || !entry.name.endsWith(".sqlite")) continue;
       const name = basename(entry.name, ".sqlite");
+
       try {
         validateSessionName(name);
       } catch {
         continue;
       }
+
       const path = join(directory, entry.name);
-      sessions.push({
-        name,
-        path,
-        legacy: false,
-        modifiedAt: (await stat(path)).mtime,
-      });
+
+      try {
+        sessions.push({
+          name,
+          path,
+          legacy: false,
+          modifiedAt: (await stat(path)).mtime,
+        });
+      } catch (error) {
+        // SAFETY: Node filesystem failures expose `code` through ErrnoException.
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
     }
   } catch (error) {
+    // SAFETY: Node filesystem failures expose `code` through ErrnoException.
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 
-  const legacy = legacyStateFile(cwd, root);
+  const selectedDefault = selectedStateFile(cwd, DEFAULT_SESSION, root);
+
   if (
-    existsSync(legacy) &&
+    existsSync(selectedDefault) &&
+    dirname(selectedDefault) !== directory &&
     !sessions.some((session) => session.name === DEFAULT_SESSION)
   ) {
-    sessions.push({
-      name: DEFAULT_SESSION,
-      path: legacy,
-      legacy: true,
-      modifiedAt: (await stat(legacy)).mtime,
-    });
+    try {
+      sessions.push({
+        name: DEFAULT_SESSION,
+        path: selectedDefault,
+        legacy: true,
+        modifiedAt: (await stat(selectedDefault)).mtime,
+      });
+    } catch (error) {
+      // SAFETY: Node filesystem failures expose `code` through ErrnoException.
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
   }
 
   return sessions.sort((left, right) => left.name.localeCompare(right.name));
 }
 
-function lockFile(stateFile: string): string {
-  return `${stateFile}.lock`;
+export function sessionLeaseFile(stateFile: string): string {
+  return `${stateFile}.lease`;
 }
 
-async function activeLock(stateFile: string): Promise<number | undefined> {
-  const path = lockFile(stateFile);
+export async function acquireSessionLease(stateFile: string): Promise<() => Promise<void>> {
+  const leaseFile = sessionLeaseFile(stateFile);
+  let database: DatabaseSync | undefined;
+
   try {
-    const value = JSON.parse(await readFile(path, "utf8")) as { pid?: unknown };
-    if (typeof value.pid !== "number" || !Number.isSafeInteger(value.pid)) {
-      return undefined;
-    }
-    try {
-      process.kill(value.pid, 0);
-      return value.pid;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EPERM") return value.pid;
-      return undefined;
-    }
+    database = new DatabaseSync(leaseFile, { timeout: 0 });
+    database.exec("BEGIN EXCLUSIVE");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    return undefined;
-  }
-}
-
-export async function acquireSessionLock(
-  stateFile: string,
-): Promise<() => Promise<void>> {
-  const path = lockFile(stateFile);
-  const token = randomUUID();
-
-  for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const handle = await open(path, "wx", 0o600);
-      try {
-        await handle.writeFile(
-          JSON.stringify({ pid: process.pid, token, startedAt: new Date() }),
-        );
-      } catch (error) {
-        await rm(path, { force: true });
-        throw error;
-      } finally {
-        await handle.close();
-      }
-      return async () => {
-        try {
-          const current = JSON.parse(await readFile(path, "utf8")) as {
-            token?: unknown;
-          };
-          if (current.token === token) await rm(path, { force: true });
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        }
-      };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const pid = await activeLock(stateFile);
-      if (pid !== undefined) {
-        throw new Error(`Session is already open by process ${pid}`);
-      }
-      await rm(path, { force: true });
+      database?.close();
+    } catch {
+      // Preserve the acquisition failure.
     }
+
+    if (
+      error instanceof Error &&
+      "errcode" in error &&
+      (error.errcode === 5 || error.errcode === 6)
+    ) {
+      throw new Error("Session is already open or being removed", {
+        cause: error,
+      });
+    }
+
+    throw new Error(`Session lease cannot be opened safely: ${leaseFile}`, {
+      cause: error,
+    });
   }
-  throw new Error("Could not acquire the session lock");
+
+  let released = false;
+
+  return async () => {
+    if (released) return;
+    released = true;
+
+    try {
+      database.exec("ROLLBACK");
+    } finally {
+      database.close();
+    }
+  };
 }
 
 export async function removeSession(
@@ -194,19 +197,24 @@ export async function removeSession(
   root = dataRoot(),
 ): Promise<string[]> {
   const path = selectedStateFile(cwd, validateSessionName(session), root);
-  if (!existsSync(path)) throw new Error(`Session '${session}' does not exist`);
-  const pid = await activeLock(path);
-  if (pid !== undefined) {
-    throw new Error(`Session '${session}' is open by process ${pid}`);
-  }
-  await rm(lockFile(path), { force: true });
 
-  const paths = [path, `${path}-shm`, `${path}-wal`];
-  const removed: string[] = [];
-  for (const candidate of paths) {
-    if (!existsSync(candidate)) continue;
-    await rm(candidate, { force: true });
-    removed.push(candidate);
+  if (!existsSync(path)) throw new Error(`Session '${session}' does not exist`);
+  const release = await acquireSessionLease(path);
+
+  try {
+    if (!existsSync(path)) throw new Error(`Session '${session}' does not exist`);
+
+    const paths = [path, `${path}-shm`, `${path}-wal`];
+    const removed: string[] = [];
+
+    for (const candidate of paths) {
+      if (!existsSync(candidate)) continue;
+      await rm(candidate, { force: true });
+      removed.push(candidate);
+    }
+
+    return removed;
+  } finally {
+    await release();
   }
-  return removed;
 }

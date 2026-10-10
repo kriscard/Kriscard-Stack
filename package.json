@@ -4,25 +4,29 @@
   "private": true,
   "description": "Skill-first engineering workflows with a durable Pi agent.",
   "type": "module",
-  "packageManager": "pnpm@10.34.4",
-  "engines": {
-    "node": ">=24",
-    "pnpm": ">=10"
-  },
   "scripts": {
     "build": "pnpm --filter @kriscard/kstack build",
     "test": "vitest run",
     "typecheck": "pnpm --filter @kriscard/kstack typecheck",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "check": "pnpm run build && pnpm test && pnpm run typecheck && pnpm run format:check",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "check": "pnpm run lint && pnpm run build && pnpm test && pnpm run typecheck && pnpm run format:check",
     "kstack": "node --enable-source-maps packages/pi-runner/dist/bin.js",
     "kriscard": "node --enable-source-maps packages/pi-runner/dist/bin.js"
   },
   "devDependencies": {
+    "@oxlint/plugins": "1.87.0",
     "@types/node": "24.10.0",
-    "prettier": "3.6.2",
+    "oxfmt": "0.72.0",
+    "oxlint": "1.87.0",
     "typescript": "7.0.2",
     "vitest": "4.1.11"
-  }
+  },
+  "engines": {
+    "node": ">=24",
+    "pnpm": ">=10"
+  },
+  "packageManager": "pnpm@10.34.4"
 }

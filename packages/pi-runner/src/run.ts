@@ -1,10 +1,10 @@
+import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
@@ -17,11 +17,12 @@ import {
 } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 
-import { acquireSessionLock, defaultStateFile } from "./session.js";
+import { acquireSessionLease, defaultStateFile } from "./session.js";
 
 export { defaultStateFile } from "./session.js";
 
 const context = BACKGROUND_CONTEXT;
+
 const repositoryModeRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../../../skills/dev/kriscard-mode",
@@ -38,37 +39,44 @@ async function loadMode(): Promise<{ contents: string; root: string }> {
     try {
       return { contents: await readFile(join(root, "SKILL.md"), "utf8"), root };
     } catch (error) {
+      // SAFETY: Node filesystem failures expose `code` through ErrnoException.
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
-  throw new Error(
-    "The kriscard-mode skill is not installed. Run 'kstack setup' first.",
-  );
+
+  throw new Error("The kriscard-mode skill is not installed. Run 'kstack setup' first.");
 }
 
 type Models = ReturnType<typeof builtinModels>;
+
+export type SessionExistence = "any" | "must-exist" | "must-not-exist";
 
 export type SessionOptions = {
   cwd: string;
   model: string;
   stateFile?: string;
   models?: Models;
+  existence?: SessionExistence;
 };
 
 export type RunOptions = SessionOptions & {
   prompt: string;
 };
 
-export function parseModel(value: string): {
+export type ParsedModel = {
   provider: string;
   modelId: string;
-} {
+};
+
+export function parseModel(value: string): ParsedModel {
   const separator = value.indexOf(":");
+
   if (separator < 1 || separator === value.length - 1) {
     throw new Error(
       "Model must use <provider>:<model-id>, for example anthropic:claude-sonnet-4-6",
     );
   }
+
   return {
     provider: value.slice(0, separator),
     modelId: value.slice(separator + 1),
@@ -100,18 +108,24 @@ export async function openKriscardConversation(
   );
 
   const models = options.models ?? builtinModels();
-  const env = ({ cwd = options.cwd }: { readonly cwd?: string }) =>
-    new NodeExecutionEnv({ cwd });
-  const releaseLock = await acquireSessionLock(stateFile);
+  const env = ({ cwd = options.cwd }: { readonly cwd?: string }) => new NodeExecutionEnv({ cwd });
+  const releaseLease = await acquireSessionLease(stateFile);
 
   try {
+    const exists = existsSync(stateFile);
+
+    if (options.existence === "must-exist" && !exists) {
+      throw new Error("Session does not exist");
+    }
+
+    if (options.existence === "must-not-exist" && exists) {
+      throw new Error("Session already exists");
+    }
+
     const storage = await openNodeSqliteStorage(stateFile);
-    const harness = await Harness.open(
-      storage,
-      { models, registry, env },
-      context,
-    );
+    const harness = await Harness.open(storage, { models, registry, env }, context);
     let root;
+
     try {
       root = await harness.root(context, {
         agent: { model, cwd: options.cwd },
@@ -124,11 +138,9 @@ export async function openKriscardConversation(
 
     return {
       async submit(prompt: string): Promise<string> {
-        const submission = await root.submit(
-          { type: "input", content: prompt },
-          context,
-        );
+        const submission = await root.submit({ type: "input", content: prompt }, context);
         const settled = await submission.wait(context);
+
         if (settled.status !== "done" || settled.type !== "input") {
           throw new Error(
             `Agent did not answer: ${settled.status === "unanswered" ? settled.reason : settled.status}`,
@@ -139,10 +151,13 @@ export async function openKriscardConversation(
           (transaction) => transaction.entry(AssistantEntry, settled.answer),
           context,
         );
-        const answer = entry?.model?.[0] as AssistantMessage | undefined;
-        if (!answer) {
+
+        const answer = entry?.model?.[0];
+
+        if (!answer || answer.role !== "assistant") {
           throw new Error("Agent completed without an assistant answer");
         }
+
         return answer.content
           .flatMap((content) => (content.type === "text" ? [content.text] : []))
           .join("");
@@ -151,25 +166,24 @@ export async function openKriscardConversation(
         try {
           await harness.close(context);
         } finally {
-          await releaseLock();
+          await releaseLease();
         }
       },
     };
   } catch (error) {
-    await releaseLock();
+    await releaseLease();
     throw error;
   }
 }
 
-export async function initializeKriscard(
-  options: SessionOptions,
-): Promise<void> {
+export async function initializeKriscard(options: SessionOptions): Promise<void> {
   const conversation = await openKriscardConversation(options);
   await conversation.close();
 }
 
 export async function runKriscard(options: RunOptions): Promise<string> {
   const conversation = await openKriscardConversation(options);
+
   try {
     return await conversation.submit(options.prompt);
   } finally {

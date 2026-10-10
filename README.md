@@ -116,7 +116,8 @@ kstack remove checkout
 - `resume` fails when it does not exist.
 - `remove` previews the exact database and requires confirmation; `--yes` is available for reviewed automation.
 - names use lowercase letters, numbers, dots, underscores, and hyphens.
-- one process owns a session at a time; a second opener or removal attempt fails safely.
+- one process owns a session lease at a time; opening and removal use the same lease.
+- the small `.lease` coordination file is retained after removal so future openers cannot race destructive cleanup.
 - removing the CLI or skills never removes durable sessions.
 
 If a project has a state file from the original one-conversation runner, its default session continues using that file. Kstack does not silently fork, move, or delete it.
