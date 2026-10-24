@@ -31,6 +31,12 @@ A playbook names the job to perform, not every implementation rule. Load only th
 whose descriptions match the current step and technology. Keep general-purpose expertise in
 `kriscard/Skills`; do not copy it into this skill.
 
+For frontend work, route ownership, validation and schema trust boundaries, and file organization to
+`frontend`; route React component composition, hooks, state, and providers to `react`; route actual
+framework mechanics to the installed matching framework skill, such as `nextjs-app-architecture`
+only for Next.js App Router work. Load matching library skills only when their precise branch applies,
+and leave these skills unloaded for unrelated tasks.
+
 Use `/spec` when the work genuinely needs requirements or design decisions. Small, clear changes may
 proceed directly. Preserve explicit user gates for destructive actions, publishing, deployment, and
 merging.
