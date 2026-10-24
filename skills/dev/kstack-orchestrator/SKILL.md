@@ -17,6 +17,19 @@ not active work. Report an unsuccessful launch immediately with its observed fai
 required decision. Keep the resource map in the parent's native session and ordinary result packets,
 not a new task database.
 
+Every coordination response, including planning-only and blocked responses, includes all six labeled
+fields. If the user requests different response sections, nest this board inside that format rather
+than dropping it:
+
+```text
+Completed: <observed completed outcomes, or none>
+Active: <verified live workers with identities, or none>
+Queued: <not-yet-launched outcomes, or none>
+Blocked: <missing evidence, capability, or authority, or none>
+Cleanup: <actual cleanup and retained resources, or none>
+Next decision: <required user decision, or none>
+```
+
 ## 1. Prove delegation helps
 
 Keep the work in the parent when one agent can complete it coherently. Delegate only when at least two outcomes can proceed independently without sharing mutable state or repeatedly exchanging discoveries.
@@ -36,7 +49,8 @@ Complete when every proposed worker has one independent outcome and the isolatio
 
 Show the user:
 
-- each worker's single goal;
+- each worker's single goal and matching playbook file path resolved from the mode's routing table,
+  not merely a label such as Feature or Bug fix; the worker confirms its selection;
 - read-only or writer classification;
 - checkout, worktree, and branch plan;
 - real dependencies and conflicts;
@@ -48,7 +62,10 @@ Normally propose no more than two implementation workers. A larger fan-out requi
 
 If the user declines, continue in the parent or serialize the outcomes. Do not treat approval of one topology as permission to create more workers, worktrees, tabs, or workspaces.
 
-Complete when the user approved the consequential fan-out and topology, or execution returned to one agent.
+Before asking for approval, check that every proposed worker has an existing matching playbook
+path and that the six-field progress board is present. Unknown checkout details remain explicitly
+unknown rather than invented. Complete when that bounded proposal is approved, or the user declines
+and execution returns to one agent.
 
 ## 3. Load the operator contract
 
