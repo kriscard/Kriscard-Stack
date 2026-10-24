@@ -5,7 +5,17 @@ description: Coordinate independent Kstack outcomes through Herdr with fresh nam
 
 # Kstack Orchestrator
 
-Coordinate bounded workers; keep execution authority in Pi, Herdr, and Git.
+Coordinate bounded workers; keep execution authority in Pi, Herdr, and Git. Native resumable Pi
+sessions are not a Pi Durable SDK integration.
+
+## Visible progress
+
+Show a short `Completed / Active / Queued / Blocked / Cleanup / Next decision` board before discovery,
+after launch attempts, at result or blocker transitions, and before returning control. List actual
+live names, branches, and session IDs for active workers; queued packets and proposed launches are
+not active work. Report an unsuccessful launch immediately with its observed failure and next
+required decision. Keep the resource map in the parent's native session and ordinary result packets,
+not a new task database.
 
 ## 1. Prove delegation helps
 
@@ -30,7 +40,8 @@ Show the user:
 - read-only or writer classification;
 - checkout, worktree, and branch plan;
 - real dependencies and conflicts;
-- expected evidence;
+- expected evidence and required read, command, and runtime capabilities;
+- review/repair round limit, execution budget, and authorized resource cleanup;
 - why delegation earns its extra model context.
 
 Normally propose no more than two implementation workers. A larger fan-out requires explicit approval. Herdr owns visible worker processes, so obtain explicit approval to use Herdr when the current request did not already name it.
@@ -65,14 +76,17 @@ For each approved worker:
 3. ask Herdr for the approved distinct worktree and branch for a writer;
 4. start an interactive `kstack --session-id <id> --name <worker-name>` process in that exact directory through the pane surface described by the live Herdr skill;
 5. create a unique completion marker for this task that is absent from current pane output;
-6. record the worker name, Pi session ID, Herdr IDs, cwd, worktree, branch, starting commit, classification, goal, and marker in the parent's Pi session;
-7. send only that worker's task packet.
+6. record the worker name, Pi session ID, Herdr IDs, cwd, worktree, branch, starting commit, classification, goal, marker, ownership, and cleanup/dependency protections in the parent's Pi session;
+7. observe that the intended agent is ready in that exact pane and directory, with the expected session identity, before sending only that worker's task packet;
+8. require the worker to report whether its actual tools support the assigned observations before substantive work. Inspection-only tools cannot execute checks; a no-file-tool reviewer needs actual pinned inline source, diff, and rules, not paths alone. Missing required capability is blocked, never passed.
 
 A worker reads the root and nearest applicable `AGENTS.md`, loads only its selected playbook and skills, inspects its assigned repository surface, and stops on a task or design departure. It does not coordinate sibling workers.
 
 Do not place the parent transcript, unrelated discoveries, another worker's complete task, or every installed skill in a task packet.
 
-Complete when every live worker is mapped to one approved outcome and every writer has a distinct worktree.
+Complete when every live worker is mapped to one approved outcome, every writer has a distinct
+worktree, and observed readiness and tool capabilities support the assigned work. An admitted launch
+command is not proof that a worker started or accepted its task.
 
 ## 5. Observe without model polling
 
@@ -80,7 +94,7 @@ Use Herdr's mechanical wait and read operations. Do not ask the parent model rep
 
 - A targeted discovery goes only to affected workers as a small amendment to their packet.
 - Steering changes tactics inside the accepted goal; a scope, behavior, design, dependency, or ownership change stops the worker and returns to the user or planning.
-- A timeout or uncertain submission is inspected before retry; it does not prove the prompt was absent.
+- A timeout, missing pane, or uncertain submission is inspected against live identity before retry; it does not prove the prompt was absent or authorize a replacement worker.
 - A blocked worker is read before any response is sent. Human approval dialogs remain with the user.
 
 If a worker process exits unexpectedly, preserve its worktree and named durable session, report the last observed state, and ask before resuming that same session. Kstack never automatically restarts it.
@@ -95,7 +109,7 @@ For mutating work intended to combine:
 
 1. identify the exact commit for each independent branch or the exact combined commit/diff after an explicitly approved integration;
 2. start a fresh verifier conversation;
-3. send the verifier expected behavior, applicable `AGENTS.md` rules, exact revision, diff boundaries, required checks, and worker evidence;
+3. send the verifier expected behavior, applicable `AGENTS.md` rules, exact revision, diff boundaries, required checks, worker evidence, the Review playbook for its checks-only verification role, and applicable domain skill/reference paths; require it to confirm Review and load that guidance before checks, rather than inheriting the author's implementation playbook;
 4. exclude implementation conversations and self-certification;
 5. treat a changed revision or unavailable observation as stale or blocked, not passed.
 
@@ -108,6 +122,35 @@ Return:
 - blockers, deviations, and uncertainty;
 - the next integration, merge, release, cleanup, or abandonment decision owned by the user.
 
-Stop worker processes that are complete while preserving their named durable sessions. Never merge, release, delete worktrees, or remove branches without explicit approval.
+After checking each result, stop completed task-owned worker processes through the authoritative
+Herdr skill while preserving named Pi session history. Merge, release, and destructive cleanup
+require explicit user approval; apply any approved cleanup through the gate below.
 
-Complete when the synthesis is bounded, evidence-backed, tied to exact revisions, and leaves consequential decisions to the user.
+Complete when the synthesis is bounded, evidence-backed, tied to exact revisions, and leaves
+unapproved consequential decisions to the user.
+
+## 7. Clean only proven eligible resources
+
+Before each approved cleanup action, refresh Git, forge, and live Herdr state. Prove task ownership
+from the session's resource map and current identity, not a name, age, idle status, or absent agent
+detection. Apply these gates:
+
+- **Views/processes:** stop only completed, task-owned workers and close only their approved unused
+  panes/tabs/views. Preserve resumable transcripts; never kill Herdr's server or unrelated agents.
+- **Worktrees:** remove only clean, inactive, task-owned worktrees. Confirm that no worker occupies
+  the checkout, no other task uses it as an input, and no verification still needs it before removal.
+  Preserve necessary commits, branches, and evidence. Dirty, unknown, occupied, or dependent worktrees
+  remain protected.
+- **Branches:** confirm the corresponding PR is merged and the intended outcome is in the target
+  branch. Use ancestry when available; a squash merge additionally needs forge revision identity
+  and a content/history comparison establishing that no branch-only work would be lost. Failed
+  ancestry alone never authorizes force deletion. Protect default/current branches, active checkouts,
+  open or stacked PR dependencies, unmerged work, and unrelated branches. If proof is ambiguous,
+  retain the branch and ask. Remote deletion requires separate explicit authorization.
+- **Main update:** after the relevant PRs are confirmed merged, fetch and fast-forward the clean,
+  inactive main checkout. If it is active, dirty, divergent, or checked out elsewhere, report the
+  blocker instead of resetting it or switching a user's checkout without approval.
+
+Return what was actually stopped, closed, removed, deleted, already absent, or retained and why.
+Complete when every candidate has a fresh eligibility receipt and no protected resource or durable
+session history was removed.

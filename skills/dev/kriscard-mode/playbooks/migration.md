@@ -3,7 +3,7 @@
 Move one versioned dependency, API, data shape, platform, or owner.
 
 1. Use `research` for current version-specific facts and identify the existing and target contracts.
-2. Use `spec` or `architect` only when the migration contains consequential compatibility or ownership decisions.
+2. For consequential compatibility or ownership decisions, use `architect` to compare alternatives and follow the mode's [requirements handoff](../SKILL.md#requirements-handoff) when an approved migration plan is needed.
 3. Define a reversible sequence and the evidence required at each boundary.
-4. Implement the smallest safe slice with the relevant domain skills and verify old and new behavior as applicable.
+4. Implement the smallest safe slice with the relevant domain skills. Check the target contract and rollback at each changed boundary; check the old contract while coexistence is required. For each omitted compatibility check, cite the approved retirement decision or report missing evidence.
 5. Return completed steps, compatibility evidence, rollback path, and remaining migration work.

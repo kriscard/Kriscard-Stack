@@ -38,8 +38,11 @@ Send one packet per worker:
 - Classification: read-only | writer
 - Dependencies: <worker/result IDs or none>
 - Conflict boundary: <paths/contracts that must remain untouched>
-- Selected playbook and skills: <small explicit set>
+- Assigned outcome and matching playbook path: <one outcome; worker confirms its single playbook>
+- Applicable skill/reference candidates: <small explicit set; worker confirms and loads matches>
 - Completion marker: `KSTACK_RESULT_<unique-token>`
+- Required capabilities and preflight: <actual read/command/runtime tools and readiness evidence>
+- Budget: <maximum rounds, execution limit, and stop condition>
 
 ## Validation
 
@@ -54,6 +57,11 @@ Send one packet per worker:
 
 Use the result packet below. Do not return a transcript.
 ```
+
+Before substantive work, the worker confirms the pinned target and that its actual tools can make
+the required observations. If not, it returns blocked with the missing capability; a profile label
+or requested tool list is not proof. A reviewer without file tools requires actual pinned source,
+diff, and rules inline and must label that inspection limit.
 
 Include a conclusion from the parent only when the worker needs it to complete this goal. Link a repository path, source, or exact commit when the worker can inspect the evidence directly.
 
@@ -117,7 +125,7 @@ Status: completed | blocked | deviation | stopped
 
 <integration, merge, destructive cleanup, budget, or scope decision, or none>
 
-KSTACK*RESULT*<unique-token>
+KSTACK_RESULT_<unique-token>
 ```
 
 The completion marker must be the final non-empty line and unique to this task so a mechanical wait cannot match stale output. A status word or marker is not proof. The parent checks the named files, commits, commands, and observations before synthesis.
@@ -131,12 +139,38 @@ A fresh verifier receives:
 
 Expected behavior: <falsifiable outcomes>
 Repository rules: <applicable AGENTS.md paths>
+Selected playbook: Review — checks-only verification of the completed change, not the author's implementation playbook; include its exact path and require confirmation
+Applicable skills and reference paths: <explicit guidance to load before checking; confirm matches>
 Target revision: <exact commit SHA or bounded diff>
 Base revision: <exact base SHA when reviewing a diff>
-Required checks: <commands and real observations>
-Worker evidence: <bounded result-packet evidence>
-Failure rule: changed revision, missing evidence, or unavailable required surface blocks a pass
-Return: verdict, findings, commands, observations, and exact verified revision
+Accepted quality improvements: <observable interface/caller/structure changes, or not applicable>
+Required checks: <commands and real observations, including relevant failure paths>
+Worker evidence: <bounded result-packet evidence and artifact paths, not self-certification>
+Authority and budget: <allowed checks, isolated environment, execution limits, owned resources>
+Failure rule: changed revision/context, missing evidence, or unavailable required surface blocks a pass
+Return: verdict, findings, commands, observations, artifacts, and exact verified revision
 ```
 
-Exclude implementation transcripts and worker self-assessment. A verifier may inspect repository evidence independently and must report when the target revision changes.
+Exclude implementation transcripts and worker self-assessment. Use a fresh verifier distinct from
+both the author and any reviewer who proposed the repair. It may inspect repository evidence
+independently and must report when the target revision or relevant context changes.
+
+## Review and evidence handoffs
+
+For a coordinated code-review loop, use the Review playbook's execution reference; this packet format
+does not authorize fan-out or fixes on its own. Give independent reviewers the same bounded intent,
+pinned revision, relevant callers/tests, governing rules, accepted patterns, and all applicable
+review axes. Ask for concrete simpler alternatives as well as defects. Preserve their initial
+independence, actual model identities, and evidence; do not forward one reviewer's findings to the
+other before its first result.
+
+The lead validates findings and records Act on / Consider / Noted / Dismissed with rationale. Only
+accepted, authorized corrections go to a writer. A changed revision requires affected re-review and
+fresh verification rather than recycling an earlier pass.
+
+Before readiness, the lead audits the verifier's actual artifacts and expectations: do checks reach
+the claimed boundary, avoid circular assertions, cover required failures, demonstrate accepted
+structural improvements, and match the final revision? A verdict or completion marker alone is not
+evidence. Return unsupported claims as missing/blocked; retain genuine partial observations without
+claiming the whole workflow passed. Stop at the agreed budget instead of spawning an endless chain
+of auditors. Platform actions, cleanup, and runtime changes retain their separate approval gates.
