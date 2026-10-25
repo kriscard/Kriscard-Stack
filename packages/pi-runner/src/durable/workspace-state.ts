@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync } from "node:fs";
+import { readFile, realpath } from "node:fs/promises";
 
 import { defineDoc } from "@earendil-works/pi-durable";
 
+import { gitExecutionControl, type GitExecutionControl } from "./git-execution.js";
 import type { Reservation } from "./workspace-claims.js";
 import type { GitBinding } from "./workspace-git.js";
 
@@ -53,19 +54,32 @@ export const WorkspacesDoc = defineDoc<WorkspaceState>({
   checkpointWhen: () => true,
 });
 
-export function verifyContextHashes(sources: readonly ContextHash[]) {
+export async function verifyContextHashes(
+  sources: readonly ContextHash[],
+  control: GitExecutionControl = gitExecutionControl(),
+) {
+  const { deadline, signal } = control;
   const names = new Set<string>();
 
   for (const source of sources) {
+    signal.throwIfAborted();
+
+    if (Date.now() >= deadline) throw new Error("Context fingerprint deadline expired");
+
     if (
       names.has(source.path) ||
-      realpathSync(source.path) !== source.path ||
+      (await realpath(source.path)) !== source.path ||
       !/^[0-9a-f]{64}$/.test(source.sha256) ||
-      createHash("sha256").update(readFileSync(source.path)).digest("hex") !== source.sha256
+      createHash("sha256")
+        .update(await readFile(source.path, { signal }))
+        .digest("hex") !== source.sha256
     ) {
       throw new Error("Approved context/source hash is stale or invalid");
     }
 
+    signal.throwIfAborted();
+
+    if (Date.now() >= deadline) throw new Error("Context fingerprint deadline expired");
     names.add(source.path);
   }
 }

@@ -233,8 +233,19 @@ async function initializeAdmissionWithConversations(
     const previous = document.record;
 
     if (
-      JSON.stringify({ ...previous, configuration: null, pendingEffectIds: [] }) !==
-      JSON.stringify(record)
+      previous.taskId !== record.taskId ||
+      previous.taskDirectory !== record.taskDirectory ||
+      previous.conversationId !== record.conversationId ||
+      previous.providerSessionId !== record.providerSessionId ||
+      previous.assignmentId !== record.assignmentId ||
+      previous.profileFingerprint !== record.profileFingerprint ||
+      admissionProfileFingerprint(previous.profile) !==
+        admissionProfileFingerprint(record.profile) ||
+      previous.contextFingerprint !== record.contextFingerprint ||
+      previous.sourceFingerprint !== record.sourceFingerprint ||
+      previous.admittedAt !== record.admittedAt ||
+      previous.deadline !== record.deadline ||
+      previous.authority !== record.authority
     )
       throw new Error("Admission inputs are immutable; retry cannot replace them");
 

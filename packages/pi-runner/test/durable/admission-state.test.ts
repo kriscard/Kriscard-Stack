@@ -318,7 +318,7 @@ test("admission denies pending local and workspace effects", async () => {
 
 test("admission uses real T4 assignments and rejects copied task admission", async () => {
   await fixture(async (host, directory, input, expected) => {
-    const repository = inspectGit(input.profile.cwd);
+    const repository = await inspectGit(input.profile.cwd);
     const worktree = join(directory, "writer");
     await host.workspaces.admit(
       repository,
@@ -485,7 +485,7 @@ test("initialized workspace state with null repository and a retained effect sti
 
 test("initialized workspace state with null repository and a real assignment still blocks reopen", async () => {
   await fixture(async (host, directory, input) => {
-    const repository = inspectGit(input.profile.cwd);
+    const repository = await inspectGit(input.profile.cwd);
     await host.workspaces.admit(
       repository,
       [
@@ -524,7 +524,7 @@ async function workerFixture(
   check: (host: DurableTaskHost, input: AdmissionInputs) => Promise<void>,
 ) {
   await fixture(async (host, directory, input) => {
-    const repository = inspectGit(input.profile.cwd);
+    const repository = await inspectGit(input.profile.cwd);
     const worktree = join(directory, "atomic-writer");
     await host.workspaces.admit(
       repository,
@@ -813,6 +813,61 @@ test("atomic worker creation rejects forged, conflicting, missing and copied adm
         ),
       ).rejects.toThrow();
       expect((await host.inspect(context)).identities).toEqual(before);
+    }
+  });
+});
+
+test("equivalent admission inputs with reordered fields retry unchanged before and after reopen", async () => {
+  await fixture(async (host, directory, input) => {
+    await initialize(host, input);
+    await configure(host);
+
+    if (input.profile.role !== "main") throw new Error("Expected main fixture profile");
+
+    const reordered: AdmissionInputs = {
+      deadline: input.deadline,
+      admittedAt: input.admittedAt,
+      sourceFingerprint: input.sourceFingerprint,
+      contextFingerprint: input.contextFingerprint,
+      profile: {
+        contextLimitBytes: input.profile.contextLimitBytes,
+        checkIds: input.profile.checkIds,
+        writePaths: input.profile.writePaths,
+        cwd: input.profile.cwd,
+        role: input.profile.role,
+      },
+    };
+
+    const before = await host.harness.snapshot(AdmissionDoc, ROOT_CONVERSATION_ID, context);
+    await initialize(host, reordered);
+    expect(await host.harness.snapshot(AdmissionDoc, ROOT_CONVERSATION_ID, context)).toEqual(
+      before,
+    );
+    await host.close(context);
+
+    const reopened = await DurableTaskHost.reopen(
+      {
+        taskId: host.taskId,
+        stateDir: join(directory, "state"),
+        models: createModels(),
+        extensions: [admissionExtension],
+      },
+      context,
+    );
+
+    try {
+      await initialize(reopened, reordered);
+      expect(await reopened.harness.snapshot(AdmissionDoc, ROOT_CONVERSATION_ID, context)).toEqual(
+        before,
+      );
+      await expect(
+        initialize(reopened, { ...reordered, deadline: reordered.deadline + 1 }),
+      ).rejects.toThrow("immutable");
+      expect(await reopened.harness.snapshot(AdmissionDoc, ROOT_CONVERSATION_ID, context)).toEqual(
+        before,
+      );
+    } finally {
+      await reopened.close(context);
     }
   });
 });
