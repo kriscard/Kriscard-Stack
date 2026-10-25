@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { request as httpRequest } from "node:http";
+import { request as httpRequest, type ClientRequest } from "node:http";
 import { connect } from "node:net";
 import { performance } from "node:perf_hooks";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -627,6 +627,47 @@ test("started scripts and returned request snapshots cannot mutate later server 
   }
 });
 
+function readHttpResponse(request: ClientRequest): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      reject(error);
+    };
+
+    const deadline = setTimeout(() => {
+      const error = new Error("HTTP response deadline exceeded");
+      fail(error);
+      request.destroy(error);
+    }, 2_000);
+
+    request.on("error", fail);
+    request.once("close", () => {
+      fail(new Error("HTTP request closed before response completed"));
+    });
+    request.once("response", (response) => {
+      let wire = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk: string) => {
+        wire += chunk;
+      });
+      response.once("error", fail);
+      response.once("close", () => {
+        if (!response.complete) fail(new Error("HTTP response closed before completion"));
+      });
+      response.once("end", () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadline);
+        resolve(wire);
+      });
+    });
+  });
+}
+
 test("HTTP arrival reserves indices and scripts before delayed body completion", async () => {
   const server = await startModelProtocolServer([
     { kind: "stream", events: textEvents },
@@ -644,19 +685,11 @@ test("HTTP arrival reserves indices and scripts before delayed body completion",
     },
   });
 
-  first.on("error", () => {});
-
-  const firstResponse = new Promise<string>((resolve, reject) => {
-    first.once("response", (response) => {
-      let wire = "";
-      response.setEncoding("utf8");
-      response.on("data", (chunk: string) => {
-        wire += chunk;
-      });
-      response.once("end", () => resolve(wire));
-      response.once("error", reject);
-    });
-  });
+  // Attach both outcomes immediately; A may fail while independent B is progressing.
+  const firstResponse = readHttpResponse(first).then(
+    (wire) => ({ wire }),
+    (error: Error) => ({ error }),
+  );
 
   try {
     first.write(body.slice(0, 10));
@@ -679,7 +712,10 @@ test("HTTP arrival reserves indices and scripts before delayed body completion",
     });
     expect(server.requests()[0]).toMatchObject({ state: "receiving", responseClosed: false });
     first.end(body.slice(10));
-    expect(await firstResponse).toContain('"content":"finite answer"');
+    const outcome = await firstResponse;
+
+    if ("error" in outcome) throw outcome.error;
+    expect(outcome.wire).toContain('"content":"finite answer"');
     expect(await server.waitForResponseClosed(0)).toMatchObject({
       state: "sent",
       bodyComplete: true,
@@ -687,7 +723,11 @@ test("HTTP arrival reserves indices and scripts before delayed body completion",
     expect(server.violations()).toEqual([]);
   } finally {
     first.destroy();
-    await server.close();
+    expect(await server.close()).toMatchObject({
+      closed: true,
+      activeSockets: 0,
+      activeResponses: 0,
+    });
   }
 });
 
@@ -853,6 +893,122 @@ test("cancelling a delayed request body closes its response without reusing its 
       activeSockets: 0,
       activeResponses: 0,
       unusedSteps: 0,
+    });
+  }
+});
+
+test("a pre-response request cancellation promptly rejects while another HTTP request progresses", async () => {
+  const server = await startModelProtocolServer([
+    { kind: "stream", events: textEvents },
+    { kind: "stream", events: toolEvents },
+  ]);
+
+  const first = httpRequest(`${server.baseUrl}/messages`, {
+    method: "POST",
+    agent: false,
+    headers: { authorization: `Bearer ${fixtureApiKey}`, "content-length": 100 },
+  });
+
+  // Observe rejection immediately, before admission or independent B progress.
+  const observed = readHttpResponse(first).then(
+    (wire) => ({ wire }),
+    (error: Error) => ({ error }),
+  );
+
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    first.write("{");
+    await server.waitForRequest(0);
+    first.destroy();
+
+    const second = await fetch(`${server.baseUrl}/messages`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${fixtureApiKey}` },
+      body: "{}",
+      signal: AbortSignal.timeout(2_000),
+    });
+
+    expect(await second.text()).toContain('"reason":"toolUse"');
+
+    const outcome = await Promise.race([
+      observed,
+      new Promise<never>((_resolve, reject) => {
+        watchdog = setTimeout(
+          () => reject(new Error("Pre-response rejection did not settle promptly")),
+          500,
+        );
+      }),
+    ]);
+
+    if (!("error" in outcome))
+      throw new Error("Cancelled request unexpectedly produced a response");
+    expect(outcome.error.message).toContain("socket hang up");
+    expect(await server.waitForResponseClosed(0)).toMatchObject({
+      state: "cancelled",
+      bodyComplete: false,
+    });
+    expect(await server.waitForResponseClosed(1)).toMatchObject({ state: "sent" });
+  } finally {
+    if (watchdog) clearTimeout(watchdog);
+    first.destroy();
+    expect(await server.close()).toMatchObject({
+      closed: true,
+      activeSockets: 0,
+      activeResponses: 0,
+    });
+  }
+});
+
+test("the explicit request deadline rejects and destroys a still-incomplete owned request", async () => {
+  const server = await startModelProtocolServer([{ kind: "stream", events: textEvents }]);
+
+  const first = httpRequest(`${server.baseUrl}/messages`, {
+    method: "POST",
+    agent: false,
+    headers: { authorization: `Bearer ${fixtureApiKey}`, "content-length": 100 },
+  });
+
+  const observed = readHttpResponse(first).then(
+    (wire) => ({ wire }),
+    (error: Error) => ({ error }),
+  );
+
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    first.write("{");
+    expect(await server.waitForRequest(0)).toMatchObject({
+      state: "receiving",
+      bodyComplete: false,
+    });
+
+    const outcome = await Promise.race([
+      observed,
+      new Promise<never>((_resolve, reject) => {
+        watchdog = setTimeout(
+          () => reject(new Error("Owned request deadline did not settle response")),
+          3_000,
+        );
+      }),
+    ]);
+
+    if (!("error" in outcome))
+      throw new Error("Incomplete request unexpectedly produced a response");
+    expect(outcome.error.message).toBe("HTTP response deadline exceeded");
+    expect(first.destroyed).toBe(true);
+    expect(await server.waitForResponseClosed(0)).toMatchObject({
+      state: "cancelled",
+      bodyComplete: false,
+    });
+    expect(server.violations()).toEqual([]);
+  } finally {
+    if (watchdog) clearTimeout(watchdog);
+    first.destroy();
+    expect(await server.close()).toMatchObject({
+      closed: true,
+      activeSockets: 0,
+      activeResponses: 0,
     });
   }
 });
