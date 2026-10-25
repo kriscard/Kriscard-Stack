@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
+import { realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 
 import type { Context } from "@earendil-works/chord";
 import { withoutAbortSignal } from "@earendil-works/chord/context";
 
+import { executeGit, gitExecutionControl } from "./git-execution.js";
+import { ProcessExecutionError } from "./process-execution.js";
 import { requireWriteScope } from "./inputs.js";
 import type { DurableTaskHost } from "./task-host.js";
 import { TaskMetadataDoc } from "./task-state.js";
@@ -12,15 +15,16 @@ import {
   acquireClaim,
   acquireAdmissionGate,
   readReservation,
+  unreleasedReservations,
   writeRecord,
   type ClaimLock,
   type Reservation,
 } from "./workspace-claims.js";
 import {
   canonicalTarget,
-  git,
   inspectGit,
   requireSameGit,
+  requireSameGitIdentity,
   type GitBinding,
 } from "./workspace-git.js";
 import { inspectRelease, confirmInspection, type ConfirmInspection } from "./workspace-release.js";
@@ -44,6 +48,21 @@ function within(parent: string, child: string) {
   const path = relative(parent, child);
 
   return path !== ".." && !path.startsWith("../") && !isAbsolute(path);
+}
+
+// Reservations survive removed targets. Canonicalize the surviving prefix so a
+// recreated parent with different filesystem casing cannot evade nested claims.
+async function canonicalReservationPath(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    const parent = dirname(path);
+
+    if (parent === path) throw error;
+
+    return join(await canonicalReservationPath(parent), basename(path));
+  }
 }
 
 function requireAuthority(authority: string) {
@@ -103,6 +122,16 @@ export class WritableWorkspaces {
   private pending: Promise<void> = Promise.resolve();
   private stopped = false;
   private blocker: string | undefined;
+  private unresolvedActivity = false;
+  private callerSourceDrift = false;
+
+  private retainUnresolved(error: Error) {
+    if (!(error instanceof ProcessExecutionError) || error.outcome.quiescent) return false;
+    this.unresolvedActivity = true;
+    this.blocker = error.message;
+
+    return true;
+  }
 
   constructor(private readonly host: DurableTaskHost) {}
 
@@ -112,7 +141,18 @@ export class WritableWorkspaces {
 
   private exclusive<T>(operation: () => Promise<T>) {
     if (this.stopped) return Promise.reject(new Error("Task workspace owner is closing"));
-    const result = this.pending.then(operation);
+
+    const result = this.pending.then(async () => {
+      if (this.unresolvedActivity) throw new Error(this.blocker);
+
+      try {
+        return await operation();
+      } catch (error) {
+        if (error instanceof Error) this.retainUnresolved(error);
+        throw error;
+      }
+    });
+
     this.pending = result.then(
       () => {},
       () => {},
@@ -124,9 +164,13 @@ export class WritableWorkspaces {
   async drain() {
     this.stopped = true;
     await this.pending;
+
+    if (this.unresolvedActivity) throw new Error(this.blocker);
   }
 
   releaseKernelClaims() {
+    if (this.unresolvedActivity) throw new Error(this.blocker);
+
     for (const claim of this.claims.values()) claim.release();
     this.claims.clear();
   }
@@ -139,6 +183,8 @@ export class WritableWorkspaces {
   }
 
   async reopen(context: Context) {
+    this.callerSourceDrift = false;
+    const control = gitExecutionControl(context.abortSignal);
     const state = await this.host.harness.snapshot(WorkspacesDoc, context);
 
     if (
@@ -153,7 +199,9 @@ export class WritableWorkspaces {
 
       if (state.repository.worktree !== metadata?.record?.repositoryRoot)
         throw new Error("Workspace repository differs from the owning task");
-      requireSameGit(state.repository);
+      const actualRepository = await inspectGit(state.repository.worktree, control);
+      requireSameGitIdentity(state.repository, actualRepository);
+      const callerSourceDrift = state.repository.sourceHash !== actualRepository.sourceHash;
 
       const active = state.assignments
         .filter((record) => record.status !== "released")
@@ -175,27 +223,50 @@ export class WritableWorkspaces {
 
           acquired.push(claim);
           requireReservation(record, claim);
-          verifyContextHashes(record.contextHashes);
+          await verifyContextHashes(record.contextHashes, control);
 
           if (record.status !== "admitted" || !record.binding)
             throw new Error("Unresolved workspace admission intent");
-          requireSameGit(record.binding);
+          await requireSameGit(record.binding, undefined, control);
         }
 
         if (state.effects.some((effect) => effect.status !== "observed"))
           throw new Error("Unresolved workspace effect intent");
 
-        for (let index = 0; index < active.length; index++) {
-          const record = active[index];
-          const claim = acquired[index];
+        if (callerSourceDrift) {
+          // A release-only reopen is not edit readiness. Reservations remain
+          // durable; an explicit release reacquires and validates its own claim.
+          for (const claim of acquired) claim.release();
+        } else {
+          for (let index = 0; index < active.length; index++) {
+            const record = active[index];
+            const claim = acquired[index];
 
-          if (record && claim) this.claims.set(record.id, claim);
+            if (record && claim) this.claims.set(record.id, claim);
+          }
         }
+
+        this.callerSourceDrift = callerSourceDrift;
+
+        if (callerSourceDrift)
+          this.blocker =
+            "Caller material source binding changed; only explicit release of unchanged assignments is allowed";
       } catch (error) {
-        for (const claim of acquired) claim.release();
+        if (error instanceof Error && this.retainUnresolved(error)) {
+          for (let index = 0; index < acquired.length; index++) {
+            const record = active[index];
+            const claim = acquired[index];
+
+            if (record && claim) this.claims.set(record.id, claim);
+          }
+        } else {
+          for (const claim of acquired) claim.release();
+        }
+
         throw error;
       }
     } catch (error) {
+      if (error instanceof Error) this.retainUnresolved(error);
       this.blocker = error instanceof Error ? error.message : "Workspace admission is blocked";
     }
   }
@@ -206,6 +277,11 @@ export class WritableWorkspaces {
     authority: string,
     context: Context,
   ) {
+    const control = gitExecutionControl(context.abortSignal);
+
+    const git = (directory: string, argv: readonly string[]) =>
+      executeGit({ cwd: directory, argv, ...control });
+
     const repository = { ...repositoryInput };
 
     const approvals = approvalInputs.map((input): AssignmentApproval => {
@@ -243,9 +319,9 @@ export class WritableWorkspaces {
 
       if (metadata?.record?.repositoryRoot !== repository.worktree)
         throw new Error("Task cannot admit a second repository");
-      requireSameGit(repository);
+      await requireSameGit(repository, undefined, control);
 
-      if (state?.repository) requireSameGit(state.repository, repository);
+      if (state?.repository) await requireSameGit(state.repository, repository, control);
 
       for (const record of active) requireOwnedAssignment(this.host, record, repository);
       const paths = active.map((record) => record.worktree);
@@ -254,11 +330,39 @@ export class WritableWorkspaces {
       const gate = await acquireAdmissionGate(repository.commonDirectory);
 
       try {
-        requireSameGit(repository);
+        await requireSameGit(repository, undefined, control);
         const ordered = [...approvals].sort(compareWorktrees);
 
+        const registered = (
+          await git(repository.worktree, ["worktree", "list", "--porcelain", "-z"])
+        )
+          .split("\0")
+          .filter((entry) => entry.startsWith("worktree "))
+          .map((entry) => entry.slice(9));
+
+        const reserved = unreleasedReservations(repository.commonDirectory).map(
+          (entry) => entry.worktree,
+        );
+
+        const globalPaths = new Set([...registered, ...reserved]);
+
+        for (const path of registered.concat(reserved))
+          globalPaths.add(await canonicalReservationPath(path));
+
         for (const approval of ordered) {
-          canonicalTarget(approval.worktree);
+          await canonicalTarget(approval.worktree);
+
+          for (const path of globalPaths) {
+            // Exact-path claim/reservation checks below retain their existing
+            // release/ownership rules. Ancestors and descendants can never share.
+            if (
+              path !== approval.worktree &&
+              (within(path, approval.worktree) || within(approval.worktree, path))
+            )
+              throw new Error(
+                "Assignment overlaps a repository-wide worktree or unreleased reservation",
+              );
+          }
 
           if (
             !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(approval.id) ||
@@ -273,23 +377,23 @@ export class WritableWorkspaces {
             );
           }
 
-          git(repository.worktree, ["check-ref-format", "--branch", approval.branch]);
+          await git(repository.worktree, ["check-ref-format", "--branch", approval.branch]);
 
           if (!/^[0-9a-f]{40,64}$/.test(approval.base))
             throw new Error("Assignment base must be a pinned commit");
-          git(repository.worktree, ["rev-parse", "--verify", `${approval.base}^{commit}`]);
+          await git(repository.worktree, ["rev-parse", "--verify", `${approval.base}^{commit}`]);
           requireWriteScope(approval.writePaths);
-          verifyContextHashes(approval.contextHashes);
+          await verifyContextHashes(approval.contextHashes, control);
 
           if (approval.kind === "create") {
             if (
               lstatSync(approval.worktree, { throwIfNoEntry: false }) ||
-              git(repository.worktree, ["branch", "--list", approval.branch]).trim()
+              (await git(repository.worktree, ["branch", "--list", approval.branch])).trim()
             ) {
               throw new Error("Worktree creation never replaces an existing directory or branch");
             }
           } else {
-            requireSameGit(approval.binding);
+            await requireSameGit(approval.binding, undefined, control);
 
             if (
               approval.binding.worktree !== approval.worktree ||
@@ -299,7 +403,7 @@ export class WritableWorkspaces {
               throw new Error("Existing worktree does not match the approved repository/branch");
             }
 
-            git(approval.worktree, ["merge-base", "--is-ancestor", approval.base, "HEAD"]);
+            await git(approval.worktree, ["merge-base", "--is-ancestor", approval.base, "HEAD"]);
           }
 
           paths.push(approval.worktree);
@@ -368,12 +472,12 @@ export class WritableWorkspaces {
 
             if (!record) throw new Error("Assignment intent is missing");
             context.abortSignal?.throwIfAborted();
-            requireSameGit(repository);
-            canonicalTarget(approval.worktree);
+            await requireSameGit(repository, undefined, control);
+            await canonicalTarget(approval.worktree);
             writeRecord(join(record.claimDirectory, "reservation.json"), record.reservation);
 
             if (approval.kind === "create")
-              git(repository.worktree, [
+              await git(repository.worktree, [
                 "worktree",
                 "add",
                 "-b",
@@ -381,9 +485,10 @@ export class WritableWorkspaces {
                 approval.worktree,
                 approval.base,
               ]);
-            record.binding = inspectGit(approval.worktree);
+            record.binding = await inspectGit(approval.worktree, control);
 
-            if (approval.kind === "existing") requireSameGit(approval.binding, record.binding);
+            if (approval.kind === "existing")
+              await requireSameGit(approval.binding, record.binding, control);
 
             if (
               record.binding.commonDirectory !== repository.commonDirectory ||
@@ -393,7 +498,7 @@ export class WritableWorkspaces {
               throw new Error("Created worktree binding is inconsistent");
           }
 
-          requireSameGit(repository);
+          await requireSameGit(repository, undefined, control);
           await this.host.harness.commit(async (tx) => {
             const document = await tx.doc(WorkspacesDoc);
 
@@ -416,12 +521,20 @@ export class WritableWorkspaces {
           for (const [id, claim] of acquired) this.claims.set(id, claim);
           retained = true;
         } catch (error) {
+          if (error instanceof Error && this.retainUnresolved(error)) {
+            for (const [id, claim] of acquired) this.claims.set(id, claim);
+            retained = true;
+          }
+
           const latest = await this.host.harness.snapshot(
             WorkspacesDoc,
             withoutAbortSignal(context),
           );
 
-          if (latest?.effects.some((effect) => effect.status === "intent"))
+          if (
+            !this.unresolvedActivity &&
+            latest?.effects.some((effect) => effect.status === "intent")
+          )
             this.blocker = "Unresolved workspace effect; inspection/reconciliation required";
           throw error;
         } finally {
@@ -434,6 +547,11 @@ export class WritableWorkspaces {
   }
 
   reconcile(confirm: ConfirmInspection, context: Context) {
+    const control = gitExecutionControl(context.abortSignal);
+
+    const git = (directory: string, argv: readonly string[]) =>
+      executeGit({ cwd: directory, argv, ...control });
+
     return this.exclusive(async () => {
       const state = await this.host.harness.snapshot(WorkspacesDoc, context);
 
@@ -441,7 +559,7 @@ export class WritableWorkspaces {
 
       if (state.assignments.filter((record) => record.status !== "released").length > 2)
         throw new Error("Too many active writable assignments");
-      requireSameGit(state.repository);
+      await requireSameGit(state.repository, undefined, control);
       const acquired = new Map<string, ClaimLock>();
       const bindings = new Map<string, GitBinding>();
       const evidence: string[] = [];
@@ -465,7 +583,7 @@ export class WritableWorkspaces {
 
           if (!reservation && record.status !== "pending")
             throw new Error("An admitted reservation disappeared");
-          const binding = inspectGit(record.worktree);
+          const binding = await inspectGit(record.worktree, control);
 
           if (
             binding.commonDirectory !== state.repository.commonDirectory ||
@@ -474,15 +592,15 @@ export class WritableWorkspaces {
               (binding.device !== record.binding.device || binding.inode !== record.binding.inode))
           )
             throw new Error("Moved/replaced or unrelated worktree cannot be reconciled");
-          git(record.worktree, ["merge-base", "--is-ancestor", record.base, "HEAD"]);
-          verifyContextHashes(record.contextHashes);
-          const inspection = await inspectRelease(binding, record.reservation);
-          const proof = confirmInspection(inspection, await confirm(inspection));
+          await git(record.worktree, ["merge-base", "--is-ancestor", record.base, "HEAD"]);
+          await verifyContextHashes(record.contextHashes, control);
+          const inspection = await inspectRelease(binding, record.reservation, control);
+          const proof = await confirmInspection(inspection, await confirm(inspection), control);
           evidence.push(JSON.stringify(proof));
           bindings.set(record.id, binding);
         }
 
-        for (const binding of bindings.values()) requireSameGit(binding);
+        for (const binding of bindings.values()) await requireSameGit(binding, undefined, control);
         const effectId = randomUUID();
         await this.host.harness.commit(async (tx) => {
           const document = await tx.doc(WorkspacesDoc);
@@ -520,6 +638,14 @@ export class WritableWorkspaces {
         for (const [id, claim] of acquired) this.claims.set(id, claim);
         acquired.clear();
         this.blocker = undefined;
+        this.callerSourceDrift = false;
+      } catch (error) {
+        if (error instanceof Error && this.retainUnresolved(error)) {
+          for (const [id, claim] of acquired) this.claims.set(id, claim);
+          acquired.clear();
+        }
+
+        throw error;
       } finally {
         for (const claim of acquired.values()) claim.release();
       }
@@ -527,6 +653,8 @@ export class WritableWorkspaces {
   }
 
   release(id: string, confirm: ConfirmInspection, context: Context) {
+    const control = gitExecutionControl(context.abortSignal);
+
     return this.exclusive(async () => {
       const state = await this.host.harness.snapshot(WorkspacesDoc, context);
       const record = state?.assignments.find((entry) => entry.id === id);
@@ -536,15 +664,21 @@ export class WritableWorkspaces {
         !record.binding ||
         !state?.repository ||
         record.status === "pending" ||
-        this.blocker ||
+        (this.blocker && !this.callerSourceDrift) ||
         state.effects.some((effect) => effect.status === "intent")
       )
         throw new Error("Only the owning resolved assignment can release its worktree");
 
       requireOwnedAssignment(this.host, record, state.repository);
+
+      if (this.callerSourceDrift)
+        requireSameGitIdentity(
+          state.repository,
+          await inspectGit(state.repository.worktree, control),
+        );
       const borrowed = this.claims.get(id);
 
-      if (!borrowed && record.status !== "released")
+      if (!borrowed && record.status !== "released" && !this.callerSourceDrift)
         throw new Error("Assignment claim is not held");
 
       const claim =
@@ -552,13 +686,27 @@ export class WritableWorkspaces {
 
       try {
         requireReservation(record, claim);
-        requireSameGit(record.binding);
-        const inspection = await inspectRelease(record.binding, record.reservation);
-        const proof = confirmInspection(inspection, await confirm(inspection));
+        await requireSameGit(record.binding, undefined, control);
+        const inspection = await inspectRelease(record.binding, record.reservation, control);
+        const proof = await confirmInspection(inspection, await confirm(inspection), control);
+
+        if (this.callerSourceDrift)
+          requireSameGitIdentity(
+            state.repository,
+            await inspectGit(state.repository.worktree, control),
+          );
         context.abortSignal?.throwIfAborted();
         const releaseId = randomUUID();
         await this.host.harness.commit(async (tx) => {
           const document = await tx.doc(WorkspacesDoc);
+          const current = document.assignments.find((entry) => entry.id === id);
+
+          if (
+            JSON.stringify(current) !== JSON.stringify(record) ||
+            JSON.stringify(document.repository) !== JSON.stringify(state.repository) ||
+            document.effects.some((entry) => entry.status === "intent")
+          )
+            throw new Error("Assignment or effects changed during release inspection");
           document.effects.push({
             id: releaseId,
             operation: "release",
@@ -592,8 +740,11 @@ export class WritableWorkspaces {
         });
         claim.release();
         this.claims.delete(id);
+      } catch (error) {
+        if (error instanceof Error && this.retainUnresolved(error)) this.claims.set(id, claim);
+        throw error;
       } finally {
-        if (!borrowed) claim.release();
+        if (!borrowed && !this.unresolvedActivity) claim.release();
       }
     });
   }

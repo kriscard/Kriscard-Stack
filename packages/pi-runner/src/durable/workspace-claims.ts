@@ -9,6 +9,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   renameSync,
   statfsSync,
@@ -193,7 +194,9 @@ export type Reservation = {
   releaseId: string | null;
 };
 
-export function readReservation(claim: ClaimLock, worktree: string): Reservation | undefined {
+type ClaimReference = Pick<ClaimLock, "directory" | "device" | "inode">;
+
+function readReservationRecord(claim: ClaimReference, worktree?: string): Reservation | undefined {
   const text = readPrivateText(join(claim.directory, "reservation.json"));
 
   if (text === undefined) return undefined;
@@ -220,7 +223,14 @@ export function readReservation(claim: ClaimLock, worktree: string): Reservation
       join(realpathSync(dirname(value.taskDirectory)), value.taskId),
       value.taskDirectory,
     );
-    assert.equal(value.worktree, worktree);
+    assert.equal(isAbsolute(value.worktree), true);
+    assert.equal(join(value.worktree), value.worktree);
+    assert.equal(
+      basename(claim.directory),
+      createHash("sha256").update(value.worktree).digest("hex"),
+    );
+
+    if (worktree !== undefined) assert.equal(value.worktree, worktree);
     assert.equal(value.lockDevice, claim.device);
     assert.equal(value.lockInode, claim.inode);
 
@@ -243,7 +253,7 @@ export function readReservation(claim: ClaimLock, worktree: string): Reservation
       assert.match(release.proof.activityEvidence, /\S/);
       assert.match(release.proof.effectEvidence, /\S/);
       assert.equal(release.proof.quiescent, true);
-      assert.equal(release.proof.observedBinding.worktree, worktree);
+      assert.equal(release.proof.observedBinding.worktree, value.worktree);
       assert.match(release.proof.processTableHash, /^[0-9a-f]{64}$/);
 
       if (release.kind === "operator-unavailable-store")
@@ -257,4 +267,55 @@ export function readReservation(claim: ClaimLock, worktree: string): Reservation
   } catch (cause) {
     throw new Error("Missing/inconsistent worktree reservation or release receipt", { cause });
   }
+}
+
+export function readReservation(claim: ClaimLock, worktree: string): Reservation | undefined {
+  return readReservationRecord(claim, worktree);
+}
+
+// Caller holds the common admission gate. Reading stable lock identity does not
+// acquire another task's lock: live and dead-owner reservations both exclude overlap.
+export function unreleasedReservations(commonDirectory: string): Reservation[] {
+  const root = join(commonDirectory, "kstack-durable", "claims");
+
+  if (!lstatSync(root, { throwIfNoEntry: false })) return [];
+  privateDirectory(root);
+  const reservations: Reservation[] = [];
+
+  for (const name of readdirSync(root)) {
+    assert.match(name, /^[0-9a-f]{64}$/);
+    const directory = join(root, name);
+    privateDirectory(directory);
+    const path = join(directory, "owner.lock");
+
+    if (!lstatSync(path, { throwIfNoEntry: false })) {
+      // acquireClaim can die after mkdir and before lock creation. No Git effect
+      // precedes reservation.json; an empty directory reserves nothing.
+      if (lstatSync(join(directory, "reservation.json"), { throwIfNoEntry: false }))
+        throw new Error("Reservation lock identity is missing");
+      continue;
+    }
+
+    const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+
+    try {
+      privateFile(descriptor);
+      const info = fstatSync(descriptor, { bigint: true });
+      const named = lstatSync(path, { bigint: true });
+      assert.equal(info.dev, named.dev);
+      assert.equal(info.ino, named.ino);
+
+      const reservation = readReservationRecord({
+        directory,
+        device: info.dev.toString(),
+        inode: info.ino.toString(),
+      });
+
+      if (reservation?.releaseId === null) reservations.push(reservation);
+    } finally {
+      closeSync(descriptor);
+    }
+  }
+
+  return reservations;
 }
