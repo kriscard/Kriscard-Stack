@@ -1136,3 +1136,110 @@ test(
     }
   },
 );
+
+test("an ABSENT reserved leaf cannot be taken over through a case alias after owner death", async () => {
+  await fixture(async (root, repository, start, approval) => {
+    const reserved = { ...approval("Writer"), worktree: join(root, "Writer") };
+    const alias = join(root, "writer");
+    await crashOwner(root, repository, reserved.worktree, async (_taskId, kill) => {
+      const caseInsensitive = existsSync(alias);
+      console.info(
+        `Actual fixture volume case-alias lookup while Writer exists: ${caseInsensitive}`,
+      );
+      await kill();
+      command(repository, ["worktree", "remove", "--force", reserved.worktree]);
+      expect(existsSync(reserved.worktree)).toBe(false);
+      expect(existsSync(alias)).toBe(false);
+      const competitor = await start();
+      await expect(
+        competitor.workspaces.admit(
+          await inspectGit(repository),
+          [
+            {
+              ...approval("different-branch"),
+              worktree: alias,
+            },
+          ],
+          authority,
+          context,
+        ),
+      ).rejects.toThrow(/ambiguous filesystem namespace/);
+      expect(existsSync(reserved.worktree)).toBe(false);
+      expect(existsSync(alias)).toBe(false);
+      expect(await competitor.harness.snapshot(WorkspacesDoc, context)).toBeUndefined();
+    });
+  });
+});
+
+test("caller edits during awaited reconciliation confirmation cannot clear blockers or publish readiness", async () => {
+  await fixture(async (root, repository, start, approval) => {
+    const host = await start();
+    const target = approval("confirm-window");
+    const originalCaller = await inspectGit(repository);
+    await host.workspaces.admit(originalCaller, [target], authority, context);
+    const originalAssignment = (await assignment(host, target.id)).binding;
+    await host.close(context);
+    writeFileSync(join(target.worktree, "file.txt"), "assignment needs explicit inspection\n");
+
+    const reopened = await DurableTaskHost.reopen(
+      { taskId: host.taskId, stateDir: join(root, "state"), models: createModels() },
+      context,
+    );
+
+    let enter: () => void = () => {};
+
+    let leave: () => void = () => {};
+
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+
+    const released = new Promise<void>((resolve) => {
+      leave = resolve;
+    });
+
+    const reconciliation = reopened.workspaces
+      .reconcile(async (inspection) => {
+        enter();
+        await released;
+
+        return confirm(inspection);
+      }, context)
+      .then(
+        () => undefined,
+        (error: Error) => error,
+      );
+
+    try {
+      await entered;
+      writeFileSync(join(repository, "file.txt"), "ordinary concurrent caller edit\n");
+      leave();
+      expect(await reconciliation).toMatchObject({
+        message: expect.stringContaining("source binding changed"),
+      });
+      expect(reopened.workspaces.blockedReason).toBeTruthy();
+      const state = await reopened.harness.snapshot(WorkspacesDoc, context);
+      expect(state?.repository).toEqual(originalCaller);
+      expect(state?.assignments[0]?.binding).toEqual(originalAssignment);
+      expect(state?.effects.filter((effect) => effect.operation === "reconcile")).toEqual([]);
+      const claim = await acquireClaim(originalCaller.commonDirectory, target.worktree, false);
+      claim.release();
+      await expect(
+        reopened.workspaces.withOwnedAssignment(
+          target.id,
+          await inspectGit(target.worktree),
+          {
+            deadline: Date.now() + 5000,
+            signal: new AbortController().signal,
+          },
+          context,
+          async () => {},
+        ),
+      ).rejects.toThrow(/not live/);
+    } finally {
+      leave();
+      await reconciliation;
+      await reopened.close(context);
+    }
+  });
+});

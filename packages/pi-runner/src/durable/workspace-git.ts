@@ -63,7 +63,7 @@ export async function inspectGit(
   const commonInfo = await stat(commonDirectory, { bigint: true });
   const head = (await git(worktree, ["rev-parse", "--verify", "HEAD^{commit}"])).trim();
   const branch = (await git(worktree, ["symbolic-ref", "--short", "HEAD"])).trim();
-  const digest = createHash("sha256").update("kstack-source-v2\0");
+  const digest = createHash("sha256").update("kstack-source-v3\0");
 
   const names = await git(worktree, [
     "ls-files",
@@ -98,7 +98,7 @@ export async function inspectGit(
       throw new Error("Material source crosses a directory symbolic link");
 
     const content = info.isSymbolicLink()
-      ? await readlink(path)
+      ? await readlink(path, { encoding: "buffer" })
       : info.isFile()
         ? await readFile(path, { signal: control.signal })
         : undefined;

@@ -10,6 +10,8 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
+  readlinkSync,
   watch,
   writeFileSync,
 } from "node:fs";
@@ -509,12 +511,56 @@ if (process.argv[2] === 'leaf') {
 );
 
 test("fingerprint inspection shares one absolute deadline across sequential Git commands", async () => {
-  await fixture(async (_root, cwd) => {
+  await fixture(async (root, cwd) => {
+    const slow = slowGit(root, cwd);
+    writeFileSync(join(cwd, ".gitattributes"), "file.txt filter=slow\n");
+    setupGit(cwd, ["add", "file.txt", ".gitattributes"]);
+    setupGit(cwd, [
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "-m",
+      "controlled clean filter",
+    ]);
+    setupGit(cwd, ["config", "filter.slow.clean", slow.command]);
+    // Preserve the indexed byte length so Git must run the clean filter rather
+    // than answering modified from its size-only stat fast path.
+    writeFileSync(join(cwd, "file.txt"), "mutated\n");
     const started = Date.now();
-    await expect(
-      inspectGit(cwd, { deadline: started + 60, signal: new AbortController().signal }),
-    ).rejects.toThrow(/deadline expired|timeout/);
-    expect(Date.now() - started).toBeLessThan(2000);
+
+    const running = inspectGit(cwd, {
+      deadline: started + 1000,
+      signal: new AbortController().signal,
+    }).then(
+      () => {
+        throw new Error("Controlled Git inspection unexpectedly completed");
+      },
+      (error: Error) => error,
+    );
+
+    try {
+      // Git's actual status/clean-filter phase follows the earlier rev-parse and
+      // ls-files commands. No assertion depends on a minimum polling delay.
+      await Promise.race([
+        slow.ready,
+        running.then((error) => {
+          throw error;
+        }),
+      ]);
+      const error = await running;
+      expect(error).toBeInstanceOf(GitExecutionError);
+
+      if (!(error instanceof GitExecutionError)) throw error;
+      expect(error.outcome).toMatchObject({ reason: "timeout", quiescent: true });
+      expect(Date.now() - started).toBeLessThan(3000);
+
+      for (const pid of slow.pids()) expect(() => process.kill(pid, 0)).toThrow();
+    } finally {
+      await running;
+      slow.close();
+    }
   });
 });
 
@@ -581,3 +627,52 @@ for (const tracked of [true, false]) {
     });
   });
 }
+
+test("raw symlink target bytes cannot collapse through replacement decoding and v2 bindings stay stale", async () => {
+  await fixture(async (_root, cwd) => {
+    const link = join(cwd, "raw-target");
+    symlinkSync(Buffer.from([0xff]), link);
+    const first = await inspectGit(cwd);
+    const old = inspectLegacyGit(cwd, "v2");
+    const lossy = readlinkSync(link);
+    expect(readlinkSync(link, { encoding: "buffer" })).toEqual(Buffer.from([0xff]));
+    await expect(requireSameGit(old)).rejects.toThrow(/source binding changed/);
+    unlinkSync(link);
+    symlinkSync(Buffer.from([0xfe]), link);
+    expect(readlinkSync(link)).toBe(lossy);
+    expect(readlinkSync(link, { encoding: "buffer" })).toEqual(Buffer.from([0xfe]));
+    expect((await inspectGit(cwd)).sourceHash).not.toBe(first.sourceHash);
+    await expect(requireSameGit(first)).rejects.toThrow(/source binding changed/);
+  });
+});
+
+test("invalid byte filenames are rejected before binding, while a real replacement-character name remains valid", async () => {
+  await fixture(async (_root, cwd) => {
+    const invalid = Buffer.concat([Buffer.from(`${cwd}/raw-`), Buffer.from([0xff])]);
+    let created = false;
+
+    try {
+      writeFileSync(invalid, "A");
+      created = true;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error)) throw error;
+      expect(["EILSEQ", "EINVAL"]).toContain(error.code);
+      console.info(
+        `Observed filesystem rejection of actual invalid-byte pathname: ${error.code}; Linux byte-path acceptance case remains platform-required`,
+      );
+    }
+
+    if (created) {
+      await expect(inspectGit(cwd)).rejects.toThrow(/not valid UTF-8/);
+      writeFileSync(invalid, "B");
+      await expect(inspectGit(cwd)).rejects.toThrow(/not valid UTF-8/);
+      unlinkSync(invalid);
+    }
+
+    const replacement = join(cwd, "raw-\uFFFD");
+    writeFileSync(replacement, "A");
+    const first = await inspectGit(cwd);
+    writeFileSync(replacement, "B");
+    expect((await inspectGit(cwd)).sourceHash).not.toBe(first.sourceHash);
+  });
+});

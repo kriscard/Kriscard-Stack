@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { setTimeout as delay } from "node:timers/promises";
+import { isUtf8 } from "node:buffer";
 
 export type ProcessExecutionResult = {
   pid: number | null;
@@ -7,6 +7,7 @@ export type ProcessExecutionResult = {
   reason: "exited" | "cancelled" | "timeout" | "output-limit" | "descendants" | "spawn-error";
   output: string;
   stdout: string;
+  stdoutValidUtf8: boolean;
   stderr: string;
   outputBytes: number;
   quiescent: boolean;
@@ -68,6 +69,21 @@ export async function runProcess(
   let closed = false;
   let stoppingAt: number | undefined;
   let killedAt: number | undefined;
+  let observer: (() => void) | undefined;
+  const wake = () => observer?.();
+
+  const waitForObservation = () =>
+    new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+
+        if (observer === done) observer = undefined;
+        resolve();
+      };
+
+      const timer = setTimeout(done, 20);
+      observer = done;
+    });
 
   function send(signal: NodeJS.Signals) {
     if (!child.pid) return;
@@ -84,6 +100,7 @@ export async function runProcess(
     reason = why;
     stoppingAt = Date.now();
     send("SIGTERM");
+    wake();
   }
 
   function collect(chunk: Buffer, stream: Buffer[]) {
@@ -104,13 +121,16 @@ export async function runProcess(
   child.once("exit", (code) => {
     exited = true;
     exitCode = code;
+    wake();
   });
   child.once("close", () => {
     closed = true;
+    wake();
   });
   child.once("error", () => {
     exited = true;
     reason = "spawn-error";
+    wake();
   });
   const abort = () => stop("cancelled");
   signal.addEventListener("abort", abort, { once: true });
@@ -136,7 +156,9 @@ export async function runProcess(
       }
 
       if (killedAt !== undefined && Date.now() - killedAt >= 5000) break;
-      await delay(20);
+      // Exit/stream/cancel events wake immediately. Poll only to observe groups
+      // with no remaining parent event; ordinary short Git calls have no 20ms floor.
+      await waitForObservation();
     }
   } finally {
     clearTimeout(timeout);
@@ -165,6 +187,7 @@ export async function runProcess(
     reason,
     output: text(output),
     stdout: text(stdout),
+    stdoutValidUtf8: isUtf8(Buffer.concat(stdout)),
     stderr: text(stderr),
     outputBytes: retained,
     quiescent,

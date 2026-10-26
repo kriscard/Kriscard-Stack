@@ -61,6 +61,8 @@ export async function executeGit(request: GitExecution): Promise<string> {
   if (outcome.reason !== "exited" || outcome.exitCode !== 0 || !outcome.quiescent)
     throw new GitExecutionError(outcome);
 
+  if (!outcome.stdoutValidUtf8) throw new Error("Git machine output is not valid UTF-8");
+
   return outcome.stdout;
 }
 
