@@ -133,7 +133,7 @@ async function fixture(
     const candidate: CandidateManifest = {
       formatVersion: 1,
       taskId: host.taskId,
-      git: inspectGit(repository),
+      git: await inspectGit(repository),
       base: revision,
       indexHash: hashVerificationContent(git(repository, ["ls-files", "--stage", "-z"])),
       artifacts,
@@ -424,7 +424,7 @@ test("receipt validation binds every identity, check definition and before/after
 });
 
 test("real staged index changes remain stale after tracked worktree bytes are restored", async () => {
-  await fixture((packet, receipt, repository) => {
+  await fixture(async (packet, receipt, repository) => {
     const name = join(repository, "source.txt");
     const original = readFileSync(name);
     writeFileSync(name, "changed staged bytes\n");
@@ -433,7 +433,7 @@ test("real staged index changes remain stale after tracked worktree bytes are re
 
     const actual = createCandidateManifest({
       ...packet.candidate,
-      git: inspectGit(repository),
+      git: await inspectGit(repository),
       indexHash: hashVerificationContent(git(repository, ["ls-files", "--stage", "-z"])),
     });
 
@@ -447,7 +447,7 @@ test("real staged index changes remain stale after tracked worktree bytes are re
 });
 
 test("real untracked source and changed configuration/context/guidance/evidence files invalidate previous receipts", async () => {
-  await fixture((packet, receipt, repository) => {
+  await fixture(async (packet, receipt, repository) => {
     const kinds: VerificationArtifact["kind"][] = [
       "configuration",
       "context",
@@ -476,13 +476,8 @@ test("real untracked source and changed configuration/context/guidance/evidence 
     }
 
     writeFileSync(join(repository, "untracked.txt"), "material untracked input\n");
-    expect(() =>
-      validateVerificationEvidence(
-        packet,
-        { ...packet.candidate, git: inspectGit(repository) },
-        receipt,
-      ),
-    ).toThrow("Stale");
+    const actual = { ...packet.candidate, git: await inspectGit(repository) };
+    expect(() => validateVerificationEvidence(packet, actual, receipt)).toThrow("Stale");
   });
 });
 
