@@ -2,7 +2,7 @@
 
 # Worker contracts
 
-These are bounded Markdown handoffs carried by separate Pi sessions. They are not schemas, protocol messages, or a second task store.
+These are bounded Markdown handoffs carried by Pi Durable worker conversations. The SDK delivers results; these packets are instructions, not a second task store.
 
 ## Task packet
 
@@ -40,7 +40,6 @@ Send one packet per worker:
 - Conflict boundary: <paths/contracts that must remain untouched>
 - Assigned outcome and matching playbook path: <one outcome; worker confirms its single playbook>
 - Applicable skill/reference candidates: <small explicit set; worker confirms and loads matches>
-- Completion marker: `KSTACK_RESULT_<unique-token>`
 - Required capabilities and preflight: <actual read/command/runtime tools and readiness evidence>
 - Budget: <maximum rounds, execution limit, and stop condition>
 
@@ -124,11 +123,9 @@ Status: completed | blocked | deviation | stopped
 ## User decisions
 
 <integration, merge, destructive cleanup, budget, or scope decision, or none>
-
-KSTACK_RESULT_<unique-token>
 ```
 
-The completion marker must be the final non-empty line and unique to this task so a mechanical wait cannot match stale output. A status word or marker is not proof. The parent checks the named files, commits, commands, and observations before synthesis.
+The SDK reporter delivers the completed answer to the main conversation. A status word is not proof. The parent checks the named files, commits, commands, and observations before synthesis.
 
 ## Verifier packet
 

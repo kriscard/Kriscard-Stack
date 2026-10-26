@@ -1,13 +1,16 @@
 # @kriscard/kstack
 
-Thin native Pi launcher with Kriscard mode enabled, plus trusted Kriscard skill setup.
+Kriscard's skill-first workflow on Pi Durable, with standard coding tools, persistent workers and SQLite recovery.
 
 ```bash
-npx @kriscard/kstack setup
-cd /path/to/project
 kstack
+kstack run "Fix the failing checkout test"
+kstack --session /private/path/session.sqlite
 ```
 
-Enter an ordinary engineering request in Pi. `kriscard-mode` selects one playbook and composes the installed skills that fit the work. Pi retains ownership of its terminal UI, tools, project instructions, sessions, and resume behavior.
+Kriscard Mode selects a playbook and applicable installed skills. Pi Durable owns execution and
+recovery. Reopen the same SQLite file to continue. `kstack pi` retains access to native Pi and its
+separate JSONL histories.
 
-See the [Kriscard Stack repository](https://github.com/kriscard/Kriscard-Stack) for installation behavior, native Pi options, security boundaries, and development instructions.
+See the [repository README](../../README.md) for building from source, setup, controls, verification
+and the trusted-local-runtime boundary. The package is not yet assumed to be published.

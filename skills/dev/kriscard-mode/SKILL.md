@@ -27,6 +27,19 @@ to choosing the playbook; resolve consequential requirements and design question
 `grilling` when the user requests a stress test. State the selected playbook, then read it. Each
 worker selects one playbook for its own outcome; the parent keeps its coordinating playbook.
 
+## Principles
+
+Read this index at task start. Load the full principle only when current evidence matches its trigger:
+
+| When                                                   | Principle                                                                        |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| Work crosses an ownership or responsibility boundary   | [Boundary discipline](../principle-boundary-discipline/SKILL.md)                 |
+| Preparing or changing PR grouping                      | [One goal per PR](../principle-one-goal-per-pull-request/SKILL.md)               |
+| Verification depends on a particular revision          | [Evidence follows the commit](../principle-evidence-follows-the-commit/SKILL.md) |
+| A handoff contains broad history or unrelated material | [Minimize context](../principle-minimize-context/SKILL.md)                       |
+| Acceptance requires behavior on a real surface         | [Prove real behavior](../principle-prove-real-behavior/SKILL.md)                 |
+| Implementation departs from an approved plan           | [Stop on plan drift](../principle-stop-on-plan-drift/SKILL.md)                   |
+
 ## Compose skills
 
 A playbook names the job to perform, not every implementation rule. Load only the installed skills
@@ -53,10 +66,13 @@ Preserve explicit user gates for destructive actions, publishing, deployment, an
 
 ## Durable execution
 
-Pi owns the conversation, tool work, persistence, resume, branching, and compaction. Continue from
-that session state. Do not create another control plane, workflow database, artifact store, API, or
-migration system. Native saved Pi sessions are not the separate experimental Pi Durable SDK;
-a request to adopt that runtime needs its own approved design and implementation scope.
+Kstack uses Pi Durable for conversations, tool execution, background workers, persistence,
+recovery and compaction. This skill and its playbooks own the workflow; the runtime does not
+encode their steps. Reopening the same session resumes pending SDK work. Inspect interrupted
+unsafe effects before retrying them.
+
+Native Pi remains available through `kstack pi`; its JSONL sessions are separate and are not
+converted into Durable sessions. Use the capabilities actually offered by the current host.
 
 Git, GitHub, project files, tests, and user-approved notes remain the ordinary sources of truth.
 

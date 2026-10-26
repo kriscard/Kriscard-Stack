@@ -33,8 +33,8 @@
       "expect": ["conflict identified", "no concurrent writers"]
     },
     {
-      "id": "missing-herdr-blocks-only-orchestration",
-      "request": "Delegate two independent changes, but HERDR_ENV is unavailable.",
+      "id": "missing-subagent-tool-blocks-delegation",
+      "request": "Delegate two independent changes, but the current host has no subagent tool.",
       "expect": [
         "orchestration blocked",
         "single-agent Kstack remains available",
@@ -43,16 +43,16 @@
     },
     {
       "id": "missing-live-capability-stops",
-      "request": "Launch writer worktrees when the installed Herdr CLI reports no safe worktree capability.",
+      "request": "Launch writers when Git worktree creation failed.",
       "expect": ["writers not launched", "missing capability reported"]
     },
     {
       "id": "worker-crash-preserves-state",
-      "request": "A writer exits after editing its worktree.",
+      "request": "The task owner process exits after a worker edits its worktree.",
       "expect": [
-        "no automatic restart",
+        "no replacement worker",
         "session and worktree preserved",
-        "resume decision requested"
+        "reopen the same storage to resume"
       ]
     },
     {

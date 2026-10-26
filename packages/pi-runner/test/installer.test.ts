@@ -62,11 +62,10 @@ test("discovers trusted candidates without conflicting same-source updates", asy
     expect.arrayContaining([
       { name: "debug", source: "kriscard/Skills" },
       { name: "kriscard-mode", source: "kriscard/Kriscard-Stack" },
-      { name: "herdr", source: "herdrdev/herdr" },
     ]),
   );
   expect(plan.conflicts).toEqual([]);
-  expect(plan.herdrAvailable).toBe(true);
+  expect(plan.commands.some((step) => step.args.includes("herdrdev/herdr"))).toBe(false);
   expect(formatSetupPlan(plan, "Setup")).toContain("DO_NOT_TRACK=1 or DISABLE_TELEMETRY=1");
 });
 

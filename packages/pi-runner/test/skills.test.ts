@@ -140,7 +140,7 @@ test("benchmarks generated principles and playbooks against the complete Pstack 
   expect(benchmark).toContain("Remove an idea when an existing artifact already handles it well");
 });
 
-test("routes orchestration to the Kstack-owned skill without copying Herdr", async () => {
+test("keeps workflow ownership in skills and execution in Pi Durable", async () => {
   const skill = await readFile(resolve(orchestratorRoot, "SKILL.md"), "utf8");
 
   const playbook = await readFile(
@@ -148,9 +148,9 @@ test("routes orchestration to the Kstack-owned skill without copying Herdr", asy
     "utf8",
   );
 
-  expect(skill).toContain("Load the installed `herdr` skill");
-  expect(skill).toContain("Kstack does not copy or cache its commands");
-  expect(skill).not.toMatch(/herdr (?:agent start|pane split|workspace create)/);
+  expect(skill).toContain("Pi Durable owns worker");
+  expect(skill).toContain("`subagent` tool");
+  expect(skill).not.toContain("Herdr");
   expect(playbook).toContain("[`kstack-orchestrator`](../../kstack-orchestrator/SKILL.md)");
   expect(playbook).not.toContain("does not provide");
 });
@@ -173,7 +173,7 @@ test("defines bounded worker and verifier handoffs", async () => {
   expect(contracts).toContain("parent conversation history or deliberation");
   expect(contracts).toContain("Target revision: <exact commit SHA or bounded diff>");
   expect(contracts).toContain("Do not return a transcript");
-  expect(contracts).toContain("KSTACK_RESULT_<unique-token>");
+  expect(contracts).toContain("SDK reporter delivers the completed answer");
 });
 
 test("covers the approved orchestration decision boundaries", async () => {
@@ -190,7 +190,7 @@ test("covers the approved orchestration decision boundaries", async () => {
     "independent-writers-use-worktrees",
     "dependent-work-is-serialized",
     "conflicting-paths-are-serialized",
-    "missing-herdr-blocks-only-orchestration",
+    "missing-subagent-tool-blocks-delegation",
     "missing-live-capability-stops",
     "worker-crash-preserves-state",
     "targeted-update-only",
