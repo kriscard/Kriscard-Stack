@@ -567,6 +567,92 @@ async function configureWorker(tx: Tx, conversationId: ConversationId, cwd: stri
   });
 }
 
+test("an assignment admits only one writer and preserves exact initialization retries", async () => {
+  await workerFixture(async (host, input) => {
+    const anchor = await host.harness.commit(async (tx) => {
+      await configureAgent(tx, ROOT_CONVERSATION_ID, { tools: [], extensions: [] });
+
+      return tx.createTask(AdmissionAnchor, null, {
+        ownership: { kind: "conversation" },
+        conversationId: ROOT_CONVERSATION_ID,
+        background: true,
+      });
+    }, context);
+
+    const create = () =>
+      createAdmittedConversation(
+        host,
+        {
+          ownership: { kind: "task", taskId: anchor },
+          assignmentId: "atomic-writer",
+          input,
+          authority,
+          environmentFingerprint: environmentHash,
+          configure: (tx, admission) =>
+            configureWorker(tx, admission.conversationId, admission.profile.cwd),
+        },
+        context,
+      );
+
+    const first = await create();
+    const original = await host.harness.snapshot(AdmissionDoc, first.id, context);
+    const before = await host.harness.commit((tx) => tx.scanConversations({}, 64), context);
+
+    await expect(create()).rejects.toThrow("Conflicting writer assignment");
+    const after = await host.harness.commit((tx) => tx.scanConversations({}, 64), context);
+    expect(after.items).toEqual(before.items);
+    expect(await host.harness.snapshot(AdmissionDoc, first.id, context)).toEqual(original);
+
+    await host.harness.commit(
+      (tx) => initializeAdmission(tx, host.taskId, first.id, input, authority),
+      context,
+    );
+    expect(await host.harness.snapshot(AdmissionDoc, first.id, context)).toEqual(original);
+
+    const reviewer = await createAdmittedConversation(
+      host,
+      {
+        ownership: { kind: "task", taskId: anchor },
+        assignmentId: "atomic-writer",
+        input: {
+          ...input,
+          profile: createRoleProfile({
+            role: "reviewer",
+            cwd: input.profile.cwd,
+            writePaths: [],
+            checkIds: [],
+            contextLimitBytes: 1000,
+          }),
+        },
+        authority,
+        environmentFingerprint: environmentHash,
+        configure: (tx, admission) =>
+          configureWorker(tx, admission.conversationId, admission.profile.cwd),
+      },
+      context,
+    );
+
+    expect(reviewer.id).not.toBe(first.id);
+    const provider = await host.harness.snapshot(ProviderDoc, first.id, context);
+
+    if (!provider) throw new Error("Missing original provider identity");
+    expect(
+      await host.harness.commit(
+        (tx) =>
+          requireAdmission(tx, {
+            taskId: host.taskId,
+            conversationId: first.id,
+            providerSessionId: provider.sessionId,
+            profileFingerprint: admissionProfileFingerprint(input.profile),
+            contextFingerprint: hash,
+            sourceFingerprint: hash,
+          }),
+        context,
+      ),
+    ).toMatchObject({ assignmentId: "atomic-writer" });
+  });
+});
+
 test("worker creation binds identity, admission and real SDK agent configuration in one transaction", async () => {
   await workerFixture(async (host, input) => {
     const anchor = await host.harness.commit(async (tx) => {
