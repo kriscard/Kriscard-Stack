@@ -55,7 +55,7 @@ export async function runDurable(options: DurableOptions): Promise<number> {
   try {
     if (!options.print) {
       options.output.write(
-        `Kriscard Mode · ${session.root.id}\n:quit pauses · :stop aborts all · :compact summarizes · Ctrl+C aborts the main turn\n`,
+        `Pi Durable backend · ${session.root.id}\n:quit pauses · :stop aborts all · :compact summarizes · Ctrl+C aborts the backend turn\n`,
       );
     }
 

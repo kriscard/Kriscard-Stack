@@ -234,7 +234,14 @@ async function fixture() {
   function start(prompt?: string, input = "") {
     const child = spawn(
       process.execPath,
-      [bin, "--session", sessionPath, ...(prompt ? [prompt] : [])],
+      [
+        bin,
+        "durable",
+        ...(prompt ? ["run"] : []),
+        "--session",
+        sessionPath,
+        ...(prompt ? [prompt] : []),
+      ],
       { cwd, env, stdio: ["pipe", "pipe", "pipe"] },
     );
 

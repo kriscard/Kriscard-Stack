@@ -1,7 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
 
-import { runDurable, type DurableOptions } from "./durable/terminal.js";
+import type { DurableOptions } from "./durable/terminal.js";
 import {
   applySetupPlan,
   createSetupPlan,
@@ -31,21 +31,22 @@ export type CliDependencies = {
   error: Writable;
   commandRunner: CommandRunner;
   runPi: PiRunner;
-  runDurable: (options: DurableOptions) => Promise<number>;
+  runDurable?: (options: DurableOptions) => Promise<number>;
 };
 
 const help = `Usage:
-  kstack [--session <sqlite-file>] [--model <provider/model>] ["<request>"]
-  kstack run [--session <sqlite-file>] [--model <provider/model>] "<request>"
-  kstack pi [native Pi options] ["<request>"]
+  kstack [native Pi options] ["<request>"]
+  kstack run [native Pi options] "<request>"
+  kstack durable run [--session <sqlite-file>] [--model <provider/model>] "<task packet>"
+  kstack durable [--session <sqlite-file>] [--model <provider/model>]
   kstack setup [--yes]
   kstack update [--yes]
 
-Kstack runs Kriscard Mode on Pi Durable. Skills own the workflow; Pi owns tasks,
-conversations, tools, compaction and recovery. Reopen the same SQLite file to resume.
-Default session: .kstack/session.sqlite in the working directory.
-The run command waits for the main conversation and its background workers, then exits.
-Use kstack pi for native Pi's UI, extensions and JSONL sessions.`;
+Kstack opens interactive Pi with Kriscard Mode. Pi owns the UI and main session;
+skills and playbooks own the workflow. Native Pi options pass through unchanged.
+The run command uses native Pi print mode. kstack pi remains an explicit alias.
+The orchestration skill uses the explicit durable backend for approved execution.
+Durable SQLite state is separate from native Pi's JSONL sessions.`;
 
 function yesOption(args: string[]): boolean {
   const index = args.indexOf("--yes");
@@ -75,7 +76,18 @@ export function parseCommand(argv: readonly string[]): CliCommand {
     return { type: command, yes };
   }
 
-  const print = command === "run";
+  if (command !== "durable") {
+    const print = command === "run";
+
+    if (print) args.shift();
+
+    if (print && !args.length) throw new Error("run requires a request");
+
+    return { type: "pi", arguments: args, print };
+  }
+
+  args.shift();
+  const print = args[0] === "run";
 
   if (print) args.shift();
   let sessionPath = ".kstack/session.sqlite";
@@ -135,7 +147,7 @@ export async function main(
     error: dependencies.error ?? process.stderr,
     commandRunner: dependencies.commandRunner ?? runCommand,
     runPi: dependencies.runPi ?? runNativePi,
-    runDurable: dependencies.runDurable ?? runDurable,
+    runDurable: dependencies.runDurable,
   };
 
   try {
@@ -161,7 +173,9 @@ export async function main(
     }
 
     if (command.type === "durable") {
-      return await resolved.runDurable({
+      const runDurable = resolved.runDurable ?? (await import("./durable/terminal.js")).runDurable;
+
+      return await runDurable({
         cwd: resolved.cwd,
         sessionPath: command.sessionPath,
         model: command.model ?? resolved.model?.replace(":", "/"),

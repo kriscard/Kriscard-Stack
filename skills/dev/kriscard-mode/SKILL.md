@@ -66,13 +66,15 @@ Preserve explicit user gates for destructive actions, publishing, deployment, an
 
 ## Durable execution
 
-Kstack uses Pi Durable for conversations, tool execution, background workers, persistence,
-recovery and compaction. This skill and its playbooks own the workflow; the runtime does not
-encode their steps. Reopening the same session resumes pending SDK work. Inspect interrupted
-unsafe effects before retrying them.
+Kstack opens interactive Pi. Pi owns the interface, main conversation, tools and native JSONL
+session. Keep ordinary work in that conversation. This skill and its playbooks own the workflow.
 
-Native Pi remains available through `kstack pi`; its JSONL sessions are separate and are not
-converted into Durable sessions. Use the capabilities actually offered by the current host.
+For approved delegated execution, the Orchestration playbook uses `kstack-orchestrator` to invoke
+the explicit Pi Durable backend. The launcher advertises its exact command. Durable owns that
+execution's conversations, tools, background workers and recovery—not the interactive frontend.
+Native sessions and Durable SQLite files are separate and are not automatically converted.
+Reopen the same backend storage to resume pending SDK work; inspect interrupted unsafe effects
+before retrying them. Use only the capabilities actually supplied by the current host.
 
 Git, GitHub, project files, tests, and user-approved notes remain the ordinary sources of truth.
 

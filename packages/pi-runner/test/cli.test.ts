@@ -28,10 +28,11 @@ function outputBuffer(): OutputBuffer {
   };
 }
 
-test("routes requests to Durable and preserves explicit native Pi access", () => {
-  expect(parseCommand([])).toMatchObject({
-    type: "durable",
-    sessionPath: ".kstack/session.sqlite",
+test("opens native Pi by default and requires an explicit Durable backend command", () => {
+  expect(parseCommand([])).toEqual({ type: "pi", arguments: [], print: false });
+  expect(parseCommand(["--continue"])).toEqual({
+    type: "pi",
+    arguments: ["--continue"],
     print: false,
   });
   expect(parseCommand(["pi", "--continue"])).toEqual({
@@ -39,17 +40,24 @@ test("routes requests to Durable and preserves explicit native Pi access", () =>
     arguments: ["--continue"],
     print: false,
   });
-  expect(parseCommand(["run", "Build", "it"])).toMatchObject({
+  expect(parseCommand(["run", "Build", "it"])).toEqual({
+    type: "pi",
+    arguments: ["Build", "it"],
+    print: true,
+  });
+  expect(parseCommand(["durable", "run", "Build it"])).toMatchObject({
     type: "durable",
     prompt: "Build it",
     print: true,
   });
-  expect(parseCommand(["--session", "other.sqlite", "--model", "provider/model"])).toMatchObject({
+  expect(
+    parseCommand(["durable", "--session", "other.sqlite", "--model", "provider/model"]),
+  ).toMatchObject({
     type: "durable",
     sessionPath: "other.sqlite",
     model: "provider/model",
   });
-  expect(() => parseCommand(["--session"])).toThrow("requires a value");
+  expect(() => parseCommand(["durable", "--session"])).toThrow("requires a value");
   expect(() => parseCommand(["run"])).toThrow("requires a request");
   expect(parseCommand(["setup", "--yes"])).toEqual({ type: "setup", yes: true });
   expect(parseCommand(["update"])).toEqual({ type: "update", yes: false });
@@ -59,15 +67,17 @@ test("opens native Pi with Kriscard mode", async () => {
   const output = outputBuffer();
   const error = outputBuffer();
   const runPi = vi.fn<PiRunner>(async () => 0);
+  const runDurable = vi.fn<(options: DurableOptions) => Promise<number>>(async () => 0);
 
   await expect(
-    main(["pi"], {
+    main([], {
       cwd: "/tmp/project",
       input: Readable.from([]),
       output: output.stream,
       error: error.stream,
       modePath: MODE_PATH,
       runPi,
+      runDurable,
     }),
   ).resolves.toBe(0);
 
@@ -75,16 +85,30 @@ test("opens native Pi with Kriscard mode", async () => {
     expect.arrayContaining(["--skill", MODE_PATH, "--append-system-prompt"]),
     "/tmp/project",
   );
+  expect(runDurable).not.toHaveBeenCalled();
   expect(error.read()).toBe("");
 });
 
-test("runs one-shot requests through Pi Durable", async () => {
+test("keeps one-shot requests in native Pi print mode", async () => {
+  const runPi = vi.fn<PiRunner>(async () => 0);
+  const runDurable = vi.fn<(options: DurableOptions) => Promise<number>>(async () => 0);
+  await expect(
+    main(["run", "Explain the code"], { modePath: MODE_PATH, runPi, runDurable }),
+  ).resolves.toBe(0);
+  expect(runPi).toHaveBeenCalledWith(
+    expect.arrayContaining(["--print", "Explain the code"]),
+    expect.any(String),
+  );
+  expect(runDurable).not.toHaveBeenCalled();
+});
+
+test("runs explicit backend requests through Pi Durable", async () => {
   const output = outputBuffer();
   const error = outputBuffer();
   const runDurable = vi.fn<(options: DurableOptions) => Promise<number>>(async () => 0);
 
   await expect(
-    main(["run", "Build", "it"], {
+    main(["durable", "run", "Build", "it"], {
       cwd: "/tmp/project",
       input: Readable.from([]),
       output: output.stream,

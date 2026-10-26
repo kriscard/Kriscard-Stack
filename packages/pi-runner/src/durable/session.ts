@@ -80,7 +80,7 @@ export async function openSession(options: SessionOptions): Promise<DurableSessi
         await resources.reload();
 
         return [
-          "You are Kriscard's coding agent. Work in the requested repository and follow its instructions.",
+          "You are executing an approved assignment in the Pi Durable backend, not the interactive Pi frontend. Work in the requested repository and return evidence to its coordinator. Do not launch another backend process.",
           KRISCARD_MODE_DIRECTIVE,
           `Read the mode skill at ${join(modePath, "SKILL.md")}.`,
           resources.getSystemPrompt(),

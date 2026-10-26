@@ -61,12 +61,20 @@ export function parseConfiguredModel(value: string): string[] {
 }
 
 export function buildPiArguments(options: BuildPiArgumentsOptions): string[] {
-  const arguments_ = [
-    "--skill",
-    options.modePath,
-    "--append-system-prompt",
-    KRISCARD_MODE_DIRECTIVE,
-  ];
+  const durableCommand = [
+    process.execPath,
+    join(dirname(fileURLToPath(import.meta.url)), "bin.js"),
+    "durable",
+  ]
+    .map((argument) => JSON.stringify(argument))
+    .join(" ");
+
+  const instructions = `${KRISCARD_MODE_DIRECTIVE}
+You are in the interactive Pi frontend. Keep ordinary tasks in this conversation.
+For approved worker delegation, follow kstack-orchestrator and use Pi Durable. Its backend command is: ${durableCommand}
+Use that explicit backend, not an unrelated native subagent extension, for Pi Durable tasks.`;
+
+  const arguments_ = ["--skill", options.modePath, "--append-system-prompt", instructions];
 
   if (options.model) arguments_.push(...parseConfiguredModel(options.model));
 

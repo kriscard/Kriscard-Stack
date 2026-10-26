@@ -1,7 +1,7 @@
 {
   "name": "@kriscard/kstack",
   "version": "0.1.0",
-  "description": "Skill-first engineering workflows on Pi Durable.",
+  "description": "Interactive Pi workflows with a Pi Durable execution backend.",
   "bin": {
     "kriscard": "dist/bin.js",
     "kstack": "dist/bin.js"
