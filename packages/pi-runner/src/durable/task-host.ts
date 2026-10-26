@@ -170,8 +170,10 @@ export class DurableTaskHost {
   }
 
   private async finishClose(context: Context) {
+    // Failed drain retains the live store, task lock and workspace claims.
+    await this.workspaces.drain();
+
     try {
-      await this.workspaces.drain();
       await this.harness.close(context);
     } finally {
       // Only the wait is cancellable; ownership ends after the actual store/runtime close.

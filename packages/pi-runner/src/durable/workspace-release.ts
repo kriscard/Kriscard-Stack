@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -6,6 +5,8 @@ import { DatabaseSync } from "node:sqlite";
 
 import type { Context } from "@earendil-works/chord";
 
+import { gitExecutionControl, type GitExecutionControl } from "./git-execution.js";
+import { ProcessExecutionError, runProcess } from "./process-execution.js";
 import { requireTaskId } from "./inputs.js";
 import { checkSqliteFiles } from "./task-files.js";
 import {
@@ -38,13 +39,23 @@ export type OperatorProof = {
 export type ConfirmInspection = (inspection: ReleaseInspection) => Promise<OperatorProof>;
 
 // Path matching flags candidates; cwd/env-only writers still require the operator's inspection.
-function processes(worktree: string) {
-  const table = execFileSync("ps", ["-axo", "pid=,ppid=,pgid=,command="], {
-    encoding: "utf8",
-    timeout: 10_000,
-    maxBuffer: 1024 * 1024,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+async function processes(worktree: string, control: GitExecutionControl) {
+  const remaining = control.deadline - Date.now();
+
+  if (remaining <= 0) throw new Error("Release inspection deadline expired");
+
+  const outcome = await runProcess(
+    "ps",
+    ["-axo", "pid=,ppid=,pgid=,command="],
+    worktree,
+    process.env,
+    Math.min(10_000, remaining),
+    control.signal,
+  );
+
+  if (outcome.reason !== "exited" || outcome.exitCode !== 0 || !outcome.quiescent)
+    throw new ProcessExecutionError(outcome, "Process inspection");
+  const table = outcome.stdout;
 
   const matching = table
     .split("\n")
@@ -58,9 +69,10 @@ function processes(worktree: string) {
 export async function inspectRelease(
   binding: GitBinding,
   reservation: Reservation,
+  control: GitExecutionControl = gitExecutionControl(),
 ): Promise<ReleaseInspection> {
-  requireSameGit(binding);
-  const observed = processes(binding.worktree);
+  await requireSameGit(binding, undefined, control);
+  const observed = await processes(binding.worktree, control);
 
   return {
     inspectionId: createHash("sha256")
@@ -73,7 +85,11 @@ export async function inspectRelease(
   };
 }
 
-export function confirmInspection(inspection: ReleaseInspection, proof: OperatorProof) {
+export async function confirmInspection(
+  inspection: ReleaseInspection,
+  proof: OperatorProof,
+  control: GitExecutionControl = gitExecutionControl(),
+) {
   if (
     proof.inspectionId !== inspection.inspectionId ||
     !proof.authority.trim() ||
@@ -87,9 +103,9 @@ export function confirmInspection(inspection: ReleaseInspection, proof: Operator
     );
   }
 
-  requireSameGit(inspection.binding);
+  await requireSameGit(inspection.binding, undefined, control);
 
-  if (processes(inspection.binding.worktree).matching.length)
+  if ((await processes(inspection.binding.worktree, control)).matching.length)
     throw new Error("Possible orphaned command activity still exists; release is blocked");
 
   return {
@@ -131,9 +147,11 @@ export async function releaseStrandedWorktree(
   context: Context,
 ) {
   context.abortSignal?.throwIfAborted();
-  const binding = inspectGit(worktree);
+  const control = gitExecutionControl(context.abortSignal);
+  const binding = await inspectGit(worktree, control);
   const claim = await acquireClaim(binding.commonDirectory, worktree, false);
   let taskLock: Awaited<ReturnType<typeof lockPrivateFile>> | undefined;
+  let unresolvedActivity = false;
 
   try {
     const reservation = readReservation(claim, worktree);
@@ -155,8 +173,8 @@ export async function releaseStrandedWorktree(
     }
 
     requireUnavailableStore(reservation.taskDirectory);
-    const inspection = await inspectRelease(binding, reservation);
-    const proof = confirmInspection(inspection, await confirm(inspection));
+    const inspection = await inspectRelease(binding, reservation, control);
+    const proof = await confirmInspection(inspection, await confirm(inspection), control);
     context.abortSignal?.throwIfAborted();
     requireUnavailableStore(reservation.taskDirectory);
     const releaseId = randomUUID();
@@ -172,8 +190,15 @@ export async function releaseStrandedWorktree(
     writeRecord(join(claim.directory, "reservation.json"), { ...reservation, releaseId });
 
     return { releaseId, tombstone: join(claim.directory, `release-${releaseId}.json`) };
+  } catch (error) {
+    unresolvedActivity = error instanceof ProcessExecutionError && !error.outcome.quiescent;
+    throw error;
   } finally {
-    taskLock?.release();
-    claim.release();
+    // An unresolved process leaves these kernel descriptors held until operator
+    // reconciliation/process shutdown, never an automatic reservation release.
+    if (!unresolvedActivity) {
+      taskLock?.release();
+      claim.release();
+    }
   }
 }

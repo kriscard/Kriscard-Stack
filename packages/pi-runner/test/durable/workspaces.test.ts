@@ -17,7 +17,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
@@ -32,6 +32,7 @@ import {
   releaseStrandedWorktree,
   type ConfirmInspection,
 } from "../../src/durable/workspace-release.js";
+import { inspectGit as inspectFixtureGit } from "./fixtures/legacy-workspace-git.js";
 import { WorkspacesDoc, type AssignmentApproval } from "../../src/durable/workspace-state.js";
 
 const context = BACKGROUND_CONTEXT;
@@ -128,8 +129,8 @@ async function assignment(host: DurableTaskHost, id: string) {
   return record;
 }
 
-function existing(approval: AssignmentApproval): AssignmentApproval {
-  return { ...approval, kind: "existing", binding: inspectGit(approval.worktree) };
+async function existing(approval: AssignmentApproval): Promise<AssignmentApproval> {
+  return { ...approval, kind: "existing", binding: await inspectGit(approval.worktree) };
 }
 
 test("two exclusive worktrees are journaled without changing the caller's dirty checkout", async () => {
@@ -139,7 +140,7 @@ test("two exclusive worktrees are journaled without changing the caller's dirty 
     const before = command(repository, ["status", "--porcelain=v1"]);
     const host = await start();
     await host.workspaces.admit(
-      inspectGit(repository),
+      await inspectGit(repository),
       [approval("alpha"), approval("beta")],
       authority,
       context,
@@ -169,7 +170,14 @@ test("admission captures approval values before async work and close drains admi
     const paths = ["file.txt"];
     const target = { ...approval("immutable"), writePaths: paths };
     const expectedWorktree = target.worktree;
-    const pending = host.workspaces.admit(inspectGit(repository), [target], authority, context);
+
+    const pending = host.workspaces.admit(
+      await inspectGit(repository),
+      [target],
+      authority,
+      context,
+    );
+
     target.worktree = join(root, "unapproved");
     paths.push("unapproved-source");
     await Promise.all([pending, host.close(context)]);
@@ -194,13 +202,23 @@ test("another task cannot acquire a live claim or a reservation left after clean
     const owner = await start();
     const competitor = await start();
     const target = approval("owned");
-    await owner.workspaces.admit(inspectGit(repository), [target], authority, context);
+    await owner.workspaces.admit(await inspectGit(repository), [target], authority, context);
     await expect(
-      competitor.workspaces.admit(inspectGit(repository), [existing(target)], authority, context),
+      competitor.workspaces.admit(
+        await inspectGit(repository),
+        [await existing(target)],
+        authority,
+        context,
+      ),
     ).rejects.toThrow(/live owner/);
     await owner.close(context);
     await expect(
-      competitor.workspaces.admit(inspectGit(repository), [existing(target)], authority, context),
+      competitor.workspaces.admit(
+        await inspectGit(repository),
+        [await existing(target)],
+        authority,
+        context,
+      ),
     ).rejects.toThrow(/unresolved assignment reservation/);
     expect(await owner.harness.closed).toEqual({ reason: "closed" });
   });
@@ -210,7 +228,7 @@ test("normal release retains source, branch, tombstone, and the stable claim ino
   await fixture(async (_root, repository, start, approval) => {
     const host = await start();
     const target = approval("retained");
-    await host.workspaces.admit(inspectGit(repository), [target], authority, context);
+    await host.workspaces.admit(await inspectGit(repository), [target], authority, context);
     const record = await assignment(host, target.id);
     const inode = statSync(join(record.claimDirectory, "owner.lock")).ino;
     await expect(releaseStrandedWorktree(target.worktree, confirm, context)).rejects.toThrow(
@@ -224,8 +242,8 @@ test("normal release retains source, branch, tombstone, and the stable claim ino
     ).toHaveLength(1);
     const competitor = await start();
     await competitor.workspaces.admit(
-      inspectGit(repository),
-      [existing(target)],
+      await inspectGit(repository),
+      [await existing(target)],
       authority,
       context,
     );
@@ -240,18 +258,18 @@ test("batch contention does not partially admit the other worktree or retain its
     const fresh = await start();
     const first = approval("a-first");
     const second = approval("z-held");
-    await owner.workspaces.admit(inspectGit(repository), [second], authority, context);
+    await owner.workspaces.admit(await inspectGit(repository), [second], authority, context);
     await expect(
       blocked.workspaces.admit(
-        inspectGit(repository),
-        [first, existing(second)],
+        await inspectGit(repository),
+        [first, await existing(second)],
         authority,
         context,
       ),
     ).rejects.toThrow(/live owner/);
     expect(await blocked.harness.snapshot(WorkspacesDoc, context)).toBeUndefined();
     expect(existsSync(first.worktree)).toBe(false);
-    await fresh.workspaces.admit(inspectGit(repository), [first], authority, context);
+    await fresh.workspaces.admit(await inspectGit(repository), [first], authority, context);
   });
 });
 
@@ -262,12 +280,12 @@ test("serialized admission enforces the writer cap and refuses a different repos
     await fixture(async (_otherRoot, otherRepository, _otherStart, otherApproval) => {
       const target = otherApproval("not-approved");
       await expect(
-        host.workspaces.admit(inspectGit(otherRepository), [target], authority, context),
+        host.workspaces.admit(await inspectGit(otherRepository), [target], authority, context),
       ).rejects.toThrow(/second repository/);
       expect(existsSync(target.worktree)).toBe(false);
     });
 
-    const source = inspectGit(repository);
+    const source = await inspectGit(repository);
 
     const results = await Promise.allSettled(
       ["first", "second", "third"].map((id) =>
@@ -294,7 +312,7 @@ test("invalid, duplicate, overlapping and excess writers fail before creating wo
       [{ ...first, writePaths: [".git/config"] }],
     ])
       await expect(
-        host.workspaces.admit(inspectGit(repository), entries, authority, context),
+        host.workspaces.admit(await inspectGit(repository), entries, authority, context),
       ).rejects.toThrow();
     expect(await host.harness.snapshot(WorkspacesDoc, context)).toBeUndefined();
     expect(existsSync(first.worktree)).toBe(false);
@@ -305,7 +323,7 @@ test("reopen reacquires matching ownership, but changed material source needs ex
   await fixture(async (root, repository, start, approval) => {
     const host = await start();
     const target = approval("resume");
-    await host.workspaces.admit(inspectGit(repository), [target], authority, context);
+    await host.workspaces.admit(await inspectGit(repository), [target], authority, context);
     await host.close(context);
     writeFileSync(join(target.worktree, "new.txt"), "an untracked material change\n");
 
@@ -317,7 +335,12 @@ test("reopen reacquires matching ownership, but changed material source needs ex
     try {
       expect(reopened.workspaces.blockedReason).toMatch(/source binding changed/);
       await expect(
-        reopened.workspaces.admit(inspectGit(repository), [approval("extra")], authority, context),
+        reopened.workspaces.admit(
+          await inspectGit(repository),
+          [approval("extra")],
+          authority,
+          context,
+        ),
       ).rejects.toThrow(/source binding changed/);
       await reopened.workspaces.reconcile(confirm, context);
       expect(reopened.workspaces.blockedReason).toBeUndefined();
@@ -335,7 +358,7 @@ test("moved worktrees block admission and never cause replacement checkout creat
   await fixture(async (root, repository, start, approval) => {
     const host = await start();
     const target = approval("moved");
-    await host.workspaces.admit(inspectGit(repository), [target], authority, context);
+    await host.workspaces.admit(await inspectGit(repository), [target], authority, context);
     await host.close(context);
     command(repository, ["worktree", "move", target.worktree, join(root, "relocated")]);
 
@@ -368,7 +391,7 @@ test("stale external context hashes block recovery rather than silently rebindin
     };
 
     const host = await start();
-    await host.workspaces.admit(inspectGit(repository), [target], authority, context);
+    await host.workspaces.admit(await inspectGit(repository), [target], authority, context);
     await host.close(context);
     writeFileSync(source, "changed context");
 
@@ -396,7 +419,7 @@ test("failed Git creation retains intent/reservation and requires inspection, no
     mkdirSync(join(repository, ".git/refs/heads/feature"), { recursive: true });
     writeFileSync(refLock, "simulate another Git operation");
     await expect(
-      host.workspaces.admit(inspectGit(repository), [target], authority, context),
+      host.workspaces.admit(await inspectGit(repository), [target], authority, context),
     ).rejects.toThrow();
     const record = await assignment(host, target.id);
     expect(record.status).toBe("pending");
@@ -408,7 +431,7 @@ test("failed Git creation retains intent/reservation and requires inspection, no
     );
     unlinkSync(refLock);
     await expect(
-      host.workspaces.admit(inspectGit(repository), [target], authority, context),
+      host.workspaces.admit(await inspectGit(repository), [target], authority, context),
     ).rejects.toThrow(/Unresolved workspace effect/);
     command(repository, ["worktree", "add", "-b", target.branch, target.worktree, target.base]);
     await host.workspaces.reconcile(confirm, context);
@@ -425,7 +448,7 @@ test("copied workspace documents cannot transfer another task's reservation owne
   await fixture(async (root, repository, start, approval) => {
     const original = await start();
     await original.workspaces.admit(
-      inspectGit(repository),
+      await inspectGit(repository),
       [approval("bound-task")],
       authority,
       context,
@@ -465,7 +488,7 @@ test("healthy stores cannot be bypassed by administrative release", async () => 
   await fixture(async (_root, repository, start, approval) => {
     const host = await start();
     const target = approval("healthy");
-    await host.workspaces.admit(inspectGit(repository), [target], authority, context);
+    await host.workspaces.admit(await inspectGit(repository), [target], authority, context);
     await host.close(context);
     await expect(releaseStrandedWorktree(target.worktree, confirm, context)).rejects.toThrow(
       /store is readable/,
@@ -477,7 +500,7 @@ test("corrupt-store recovery requires authority/evidence and leaves the corrupt 
   await fixture(async (_root, repository, start, approval) => {
     const host = await start();
     const target = approval("corrupt");
-    await host.workspaces.admit(inspectGit(repository), [target], authority, context);
+    await host.workspaces.admit(await inspectGit(repository), [target], authority, context);
     await host.close(context);
     const database = join(host.directory, "session.sqlite");
     writeFileSync(database, "retained corrupt database");
@@ -495,8 +518,8 @@ test("corrupt-store recovery requires authority/evidence and leaves the corrupt 
     );
     const competitor = await start();
     await competitor.workspaces.admit(
-      inspectGit(repository),
-      [existing(target)],
+      await inspectGit(repository),
+      [await existing(target)],
       authority,
       context,
     );
@@ -507,7 +530,7 @@ test("a release interrupted after its SDK receipt can be explicitly finished wit
   await fixture(async (root, repository, start, approval) => {
     const host = await start();
     const target = approval("release-window");
-    await host.workspaces.admit(inspectGit(repository), [target], authority, context);
+    await host.workspaces.admit(await inspectGit(repository), [target], authority, context);
     const record = await assignment(host, target.id);
     const reservation = join(record.claimDirectory, "reservation.json");
     const extraLink = join(root, "retained-reservation-link");
@@ -527,7 +550,12 @@ test("a release interrupted after its SDK receipt can be explicitly finished wit
     await host.close(context);
     const competitor = await start();
     await expect(
-      competitor.workspaces.admit(inspectGit(repository), [existing(target)], authority, context),
+      competitor.workspaces.admit(
+        await inspectGit(repository),
+        [await existing(target)],
+        authority,
+        context,
+      ),
     ).rejects.toThrow(/unresolved assignment reservation/);
 
     const reopened = await DurableTaskHost.reopen(
@@ -542,8 +570,8 @@ test("a release interrupted after its SDK receipt can be explicitly finished wit
     }
 
     await competitor.workspaces.admit(
-      inspectGit(repository),
-      [existing(target)],
+      await inspectGit(repository),
+      [await existing(target)],
       authority,
       context,
     );
@@ -554,7 +582,7 @@ test("malformed tombstones and replaced stable claim inodes cannot authorize a n
   await fixture(async (_root, repository, start, approval) => {
     const host = await start();
     const target = approval("receipt");
-    await host.workspaces.admit(inspectGit(repository), [target], authority, context);
+    await host.workspaces.admit(await inspectGit(repository), [target], authority, context);
     const record = await assignment(host, target.id);
     await host.workspaces.release(target.id, confirm, context);
 
@@ -567,7 +595,12 @@ test("malformed tombstones and replaced stable claim inodes cannot authorize a n
     writeFileSync(join(record.claimDirectory, tombstone), "{}");
     const competitor = await start();
     await expect(
-      competitor.workspaces.admit(inspectGit(repository), [existing(target)], authority, context),
+      competitor.workspaces.admit(
+        await inspectGit(repository),
+        [await existing(target)],
+        authority,
+        context,
+      ),
     ).rejects.toThrow(/receipt/);
     writeFileSync(join(record.claimDirectory, tombstone), contents);
     const lock = join(record.claimDirectory, "owner.lock");
@@ -576,7 +609,12 @@ test("malformed tombstones and replaced stable claim inodes cannot authorize a n
     unlinkSync(lock);
     linkSync(replacement, lock);
     await expect(
-      competitor.workspaces.admit(inspectGit(repository), [existing(target)], authority, context),
+      competitor.workspaces.admit(
+        await inspectGit(repository),
+        [await existing(target)],
+        authority,
+        context,
+      ),
     ).rejects.toThrow(/single-link/);
   });
 });
@@ -600,7 +638,7 @@ test("source fingerprinting refuses tracked files reached through a replaced dir
     writeFileSync(join(outside, "tracked.txt"), "not approved source");
     rmSync(join(repository, "directory"), { recursive: true });
     symlinkSync(outside, join(repository, "directory"));
-    expect(() => inspectGit(repository)).toThrow(/source.*link|symbolic|contain/i);
+    await expect(inspectGit(repository)).rejects.toThrow(/source.*link|symbolic|contain/i);
   });
 });
 
@@ -649,7 +687,7 @@ test("administration also refuses a live task lock when its worktree claim is fr
       target.worktree,
       async (taskId, kill) => {
         const claim = await acquireClaim(
-          inspectGit(repository).commonDirectory,
+          (await inspectGit(repository)).commonDirectory,
           target.worktree,
           false,
         );
@@ -674,7 +712,12 @@ test("SIGKILL frees the kernel claim but not the assignment reservation; matchin
       await kill();
       const competitor = await start();
       await expect(
-        competitor.workspaces.admit(inspectGit(repository), [existing(target)], authority, context),
+        competitor.workspaces.admit(
+          await inspectGit(repository),
+          [await existing(target)],
+          authority,
+          context,
+        ),
       ).rejects.toThrow(/unresolved assignment reservation/);
 
       const reopened = await DurableTaskHost.reopen(
@@ -690,8 +733,8 @@ test("SIGKILL frees the kernel claim but not the assignment reservation; matchin
       }
 
       await competitor.workspaces.admit(
-        inspectGit(repository),
-        [existing(target)],
+        await inspectGit(repository),
+        [await existing(target)],
         authority,
         context,
       );
@@ -747,11 +790,456 @@ test("missing-store recovery blocks live/orphan activity and retains an explicit
       expect(readFileSync(join(target.worktree, "file.txt"), "utf8")).toContain("orphan write");
       const competitor = await start();
       await competitor.workspaces.admit(
-        inspectGit(repository),
-        [existing(target)],
+        await inspectGit(repository),
+        [await existing(target)],
         authority,
         context,
       );
     });
+  });
+});
+
+test("two live hosts cannot admit nested worktrees through distinct exact-path claims", async () => {
+  await fixture(async (_root, repository, start, approval) => {
+    const owner = await start();
+    const competitor = await start();
+    const outer = { ...approval("outer"), writePaths: ["nested/**"] };
+    await owner.workspaces.admit(await inspectGit(repository), [outer], authority, context);
+    const nested = { ...approval("nested"), worktree: join(outer.worktree, "nested") };
+    await expect(
+      competitor.workspaces.admit(await inspectGit(repository), [nested], authority, context),
+    ).rejects.toThrow(/repository-wide.*worktree|unreleased reservation/);
+    expect(existsSync(nested.worktree)).toBe(false);
+    expect(await competitor.harness.snapshot(WorkspacesDoc, context)).toBeUndefined();
+    expect((await assignment(owner, outer.id)).status).toBe("admitted");
+  });
+});
+
+test("registered worktrees without task reservations also exclude nested targets", async () => {
+  await fixture(async (_root, repository, start, approval) => {
+    const registered = approval("registered");
+    command(repository, [
+      "worktree",
+      "add",
+      "-b",
+      registered.branch,
+      registered.worktree,
+      registered.base,
+    ]);
+    const host = await start();
+    const nested = { ...approval("nested"), worktree: join(registered.worktree, "nested") };
+    await expect(
+      host.workspaces.admit(await inspectGit(repository), [nested], authority, context),
+    ).rejects.toThrow(/repository-wide.*worktree|unreleased reservation/);
+    expect(existsSync(nested.worktree)).toBe(false);
+  });
+});
+
+test("owner death and Git unregistration do not erase a cross-task ancestor reservation", async () => {
+  await fixture(async (root, repository, start, approval) => {
+    const outer = approval("stranded-outer");
+    await crashOwner(root, repository, outer.worktree, async (_taskId, kill) => {
+      await kill();
+      command(repository, ["worktree", "remove", "--force", outer.worktree]);
+
+      const differentlyCased = join(
+        dirname(outer.worktree),
+        basename(outer.worktree).toUpperCase(),
+      );
+
+      mkdirSync(differentlyCased);
+      // On a case-insensitive volume this is the same reserved path under a new
+      // canonical spelling; on a case-sensitive volume keep the original target.
+      const parent = existsSync(outer.worktree) ? differentlyCased : outer.worktree;
+
+      if (!existsSync(parent)) mkdirSync(parent);
+      const competitor = await start();
+      const nested = { ...approval("nested"), worktree: join(parent, "nested") };
+      await expect(
+        competitor.workspaces.admit(await inspectGit(repository), [nested], authority, context),
+      ).rejects.toThrow(/repository-wide.*worktree|unreleased reservation/);
+      expect(existsSync(nested.worktree)).toBe(false);
+      expect(await competitor.harness.snapshot(WorkspacesDoc, context)).toBeUndefined();
+    });
+  });
+});
+
+test("caller-only source drift permits explicit release of an unchanged assignment but never silently resumes edits", async () => {
+  await fixture(async (root, repository, start, approval) => {
+    const host = await start();
+    const target = approval("release-only");
+    const original = await inspectGit(repository);
+    await host.workspaces.admit(original, [target], authority, context);
+    await host.close(context);
+    writeFileSync(join(repository, "file.txt"), "ordinary caller edit\n");
+    await expect(releaseStrandedWorktree(target.worktree, confirm, context)).rejects.toThrow(
+      /store is readable/,
+    );
+
+    const reopened = await DurableTaskHost.reopen(
+      { taskId: host.taskId, stateDir: join(root, "state"), models: createModels() },
+      context,
+    );
+
+    try {
+      expect(reopened.workspaces.blockedReason).toMatch(/only explicit release/);
+      const notEditReady = await acquireClaim(original.commonDirectory, target.worktree, false);
+      notEditReady.release();
+      const competitor = await start();
+      await expect(
+        competitor.workspaces.admit(
+          await inspectGit(repository),
+          [await existing(target)],
+          authority,
+          context,
+        ),
+      ).rejects.toThrow(/unresolved assignment reservation/);
+      await expect(
+        competitor.workspaces.admit(
+          await inspectGit(repository),
+          [
+            {
+              ...approval("nested-release-only"),
+              worktree: join(target.worktree, "nested"),
+            },
+          ],
+          authority,
+          context,
+        ),
+      ).rejects.toThrow(/repository-wide/);
+      await expect(reopened.workspaces.reconcile(confirm, context)).rejects.toThrow(
+        /source binding changed/,
+      );
+      await expect(
+        reopened.workspaces.admit(
+          await inspectGit(repository),
+          [approval("new-writer")],
+          authority,
+          context,
+        ),
+      ).rejects.toThrow(/only explicit release/);
+      await reopened.workspaces.release(target.id, confirm, context);
+      const state = await reopened.harness.snapshot(WorkspacesDoc, context);
+      expect(state?.repository).toEqual(original);
+      expect(state?.assignments[0]?.status).toBe("released");
+      expect(state?.effects.at(-1)).toMatchObject({ operation: "release", status: "observed" });
+      expect(reopened.workspaces.blockedReason).toMatch(/only explicit release/);
+      expect(readFileSync(join(repository, "file.txt"), "utf8")).toBe("ordinary caller edit\n");
+      expect(readFileSync(join(target.worktree, "file.txt"), "utf8")).toBe("original\n");
+    } finally {
+      await reopened.close(context);
+    }
+  });
+});
+
+test("release-only caller drift cannot bypass changed assignment source or a changed repository identity", async () => {
+  for (const changed of ["assignment", "branch"] as const) {
+    await fixture(async (root, repository, start, approval) => {
+      const host = await start();
+      const target = approval(`unchanged-${changed}`);
+      await host.workspaces.admit(await inspectGit(repository), [target], authority, context);
+      await host.close(context);
+      writeFileSync(join(repository, "file.txt"), "ordinary caller edit\n");
+
+      if (changed === "assignment")
+        writeFileSync(join(target.worktree, "file.txt"), "unapproved assignment edit\n");
+      else command(repository, ["switch", "-c", "caller-moved"]);
+
+      const reopened = await DurableTaskHost.reopen(
+        { taskId: host.taskId, stateDir: join(root, "state"), models: createModels() },
+        context,
+      );
+
+      let confirmed = false;
+
+      try {
+        await expect(
+          reopened.workspaces.release(
+            target.id,
+            async (inspection) => {
+              confirmed = true;
+
+              return confirm(inspection);
+            },
+            context,
+          ),
+        ).rejects.toThrow(/resolved assignment/);
+        expect(confirmed).toBe(false);
+        expect((await assignment(reopened, target.id)).status).toBe("admitted");
+      } finally {
+        await reopened.close(context);
+      }
+    });
+  }
+});
+
+test("ancestor admission is excluded by a different host's registered and reserved descendant", async () => {
+  await fixture(async (root, repository, start, approval) => {
+    const parent = join(root, "container");
+    mkdirSync(parent);
+    const owner = await start();
+    const competitor = await start();
+    const nested = { ...approval("nested"), worktree: join(parent, "nested") };
+    await owner.workspaces.admit(await inspectGit(repository), [nested], authority, context);
+    const outer = { ...approval("outer"), worktree: parent };
+    await expect(
+      competitor.workspaces.admit(await inspectGit(repository), [outer], authority, context),
+    ).rejects.toThrow(/repository-wide.*worktree|unreleased reservation/);
+    expect((await assignment(owner, nested.id)).status).toBe("admitted");
+    expect(await competitor.harness.snapshot(WorkspacesDoc, context)).toBeUndefined();
+  });
+});
+
+test("release-only recovery rechecks immutable caller identity after operator confirmation", async () => {
+  await fixture(async (root, repository, start, approval) => {
+    const host = await start();
+    const target = approval("callback-drift");
+    await host.workspaces.admit(await inspectGit(repository), [target], authority, context);
+    await host.close(context);
+    writeFileSync(join(repository, "file.txt"), "caller edit\n");
+
+    const reopened = await DurableTaskHost.reopen(
+      { taskId: host.taskId, stateDir: join(root, "state"), models: createModels() },
+      context,
+    );
+
+    try {
+      await expect(
+        reopened.workspaces.release(
+          target.id,
+          async (inspection) => {
+            const proof = await confirm(inspection);
+            command(repository, ["switch", "-c", "changed-during-confirm"]);
+
+            return proof;
+          },
+          context,
+        ),
+      ).rejects.toThrow(/Git identity changed/);
+      const state = await reopened.harness.snapshot(WorkspacesDoc, context);
+      expect(state?.assignments[0]?.status).toBe("admitted");
+      expect(state?.effects).toHaveLength(1);
+      expect(state?.effects[0]?.operation).toBe("admit");
+    } finally {
+      await reopened.close(context);
+    }
+  });
+});
+
+test("unframed persisted source bindings reopen stale without automatic hash migration", async () => {
+  await fixture(async (root, repository, start, approval) => {
+    const host = await start();
+    const target = approval("old-binding");
+    await host.workspaces.admit(await inspectGit(repository), [target], authority, context);
+    const oldRepository = inspectFixtureGit(repository, "legacy");
+    const oldAssignment = inspectFixtureGit(target.worktree, "legacy");
+    await host.harness.commit(async (tx) => {
+      const document = await tx.doc(WorkspacesDoc);
+      document.repository = oldRepository;
+      const record = document.assignments[0];
+
+      if (!record) throw new Error("Missing real assignment");
+      record.binding = oldAssignment;
+    }, context);
+    await host.close(context);
+
+    const reopened = await DurableTaskHost.reopen(
+      { taskId: host.taskId, stateDir: join(root, "state"), models: createModels() },
+      context,
+    );
+
+    try {
+      expect(reopened.workspaces.blockedReason).toMatch(/source binding changed/);
+      await expect(
+        reopened.workspaces.admit(
+          await inspectGit(repository),
+          [approval("new-writer")],
+          authority,
+          context,
+        ),
+      ).rejects.toThrow(/source binding changed/);
+      const state = await reopened.harness.snapshot(WorkspacesDoc, context);
+      expect(state?.repository).toEqual(oldRepository);
+      expect(state?.assignments[0]?.binding).toEqual(oldAssignment);
+    } finally {
+      await reopened.close(context);
+    }
+  });
+});
+
+test(
+  "release-only recovery still rejects actual orphan activity and unresolved effects",
+  { timeout: 15_000 },
+  async () => {
+    for (const pending of ["activity", "effect"] as const) {
+      await fixture(async (root, repository, start, approval) => {
+        const host = await start();
+        const target = approval(`release-${pending}`);
+        await host.workspaces.admit(await inspectGit(repository), [target], authority, context);
+        await host.close(context);
+        writeFileSync(join(repository, "file.txt"), "caller edit\n");
+
+        const reopened = await DurableTaskHost.reopen(
+          { taskId: host.taskId, stateDir: join(root, "state"), models: createModels() },
+          context,
+        );
+
+        try {
+          expect(reopened.workspaces.blockedReason).toMatch(/only explicit release/);
+
+          if (pending === "effect") {
+            await reopened.harness.commit(async (tx) => {
+              const document = await tx.doc(WorkspacesDoc);
+              const original = document.effects[0];
+
+              if (!original) throw new Error("Missing real original effect");
+              document.effects.push({
+                ...original,
+                id: "pending-inspection",
+                operation: "reconcile",
+                status: "intent",
+              });
+            }, context);
+            await expect(reopened.workspaces.release(target.id, confirm, context)).rejects.toThrow(
+              /resolved assignment/,
+            );
+            expect(
+              (await reopened.harness.snapshot(WorkspacesDoc, context))?.effects.at(-1)?.status,
+            ).toBe("intent");
+          } else {
+            const orphan = spawn(
+              process.execPath,
+              ["-e", "console.log('ready');setInterval(()=>{},1000)", target.worktree],
+              { stdio: "pipe" },
+            );
+
+            const reader = createInterface({ input: orphan.stdout });
+            const exited = once(orphan, "exit");
+
+            try {
+              await reader[Symbol.asyncIterator]().next();
+              await expect(
+                reopened.workspaces.release(target.id, confirm, context),
+              ).rejects.toThrow(/quiescence/);
+            } finally {
+              orphan.kill("SIGKILL");
+              await exited;
+              reader.close();
+            }
+          }
+
+          expect((await assignment(reopened, target.id)).status).toBe("admitted");
+        } finally {
+          await reopened.close(context);
+        }
+      });
+    }
+  },
+);
+
+test("an ABSENT reserved leaf cannot be taken over through a case alias after owner death", async () => {
+  await fixture(async (root, repository, start, approval) => {
+    const reserved = { ...approval("Writer"), worktree: join(root, "Writer") };
+    const alias = join(root, "writer");
+    await crashOwner(root, repository, reserved.worktree, async (_taskId, kill) => {
+      const caseInsensitive = existsSync(alias);
+      console.info(
+        `Actual fixture volume case-alias lookup while Writer exists: ${caseInsensitive}`,
+      );
+      await kill();
+      command(repository, ["worktree", "remove", "--force", reserved.worktree]);
+      expect(existsSync(reserved.worktree)).toBe(false);
+      expect(existsSync(alias)).toBe(false);
+      const competitor = await start();
+      await expect(
+        competitor.workspaces.admit(
+          await inspectGit(repository),
+          [
+            {
+              ...approval("different-branch"),
+              worktree: alias,
+            },
+          ],
+          authority,
+          context,
+        ),
+      ).rejects.toThrow(/ambiguous filesystem namespace/);
+      expect(existsSync(reserved.worktree)).toBe(false);
+      expect(existsSync(alias)).toBe(false);
+      expect(await competitor.harness.snapshot(WorkspacesDoc, context)).toBeUndefined();
+    });
+  });
+});
+
+test("caller edits during awaited reconciliation confirmation cannot clear blockers or publish readiness", async () => {
+  await fixture(async (root, repository, start, approval) => {
+    const host = await start();
+    const target = approval("confirm-window");
+    const originalCaller = await inspectGit(repository);
+    await host.workspaces.admit(originalCaller, [target], authority, context);
+    const originalAssignment = (await assignment(host, target.id)).binding;
+    await host.close(context);
+    writeFileSync(join(target.worktree, "file.txt"), "assignment needs explicit inspection\n");
+
+    const reopened = await DurableTaskHost.reopen(
+      { taskId: host.taskId, stateDir: join(root, "state"), models: createModels() },
+      context,
+    );
+
+    let enter: () => void = () => {};
+
+    let leave: () => void = () => {};
+
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+
+    const released = new Promise<void>((resolve) => {
+      leave = resolve;
+    });
+
+    const reconciliation = reopened.workspaces
+      .reconcile(async (inspection) => {
+        enter();
+        await released;
+
+        return confirm(inspection);
+      }, context)
+      .then(
+        () => undefined,
+        (error: Error) => error,
+      );
+
+    try {
+      await entered;
+      writeFileSync(join(repository, "file.txt"), "ordinary concurrent caller edit\n");
+      leave();
+      expect(await reconciliation).toMatchObject({
+        message: expect.stringContaining("source binding changed"),
+      });
+      expect(reopened.workspaces.blockedReason).toBeTruthy();
+      const state = await reopened.harness.snapshot(WorkspacesDoc, context);
+      expect(state?.repository).toEqual(originalCaller);
+      expect(state?.assignments[0]?.binding).toEqual(originalAssignment);
+      expect(state?.effects.filter((effect) => effect.operation === "reconcile")).toEqual([]);
+      const claim = await acquireClaim(originalCaller.commonDirectory, target.worktree, false);
+      claim.release();
+      await expect(
+        reopened.workspaces.withOwnedAssignment(
+          target.id,
+          await inspectGit(target.worktree),
+          {
+            deadline: Date.now() + 5000,
+            signal: new AbortController().signal,
+          },
+          context,
+          async () => {},
+        ),
+      ).rejects.toThrow(/not live/);
+    } finally {
+      leave();
+      await reconciliation;
+      await reopened.close(context);
+    }
   });
 });

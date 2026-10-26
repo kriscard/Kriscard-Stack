@@ -8,7 +8,7 @@ import { inspectGit } from "../../../dist/durable/workspace-git.js";
 
 const [root, repository, worktree] = process.argv.slice(2);
 
-const binding = inspectGit(repository);
+const binding = await inspectGit(repository);
 
 const host = await DurableTaskHost.start(
   { repositoryRoot: repository, stateDir: join(root, "state"), models: createModels() },
