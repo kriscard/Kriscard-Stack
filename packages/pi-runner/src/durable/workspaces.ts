@@ -4,9 +4,10 @@ import { realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 
 import type { Context } from "@earendil-works/chord";
+import type { Tx } from "@earendil-works/pi-durable";
 import { withoutAbortSignal } from "@earendil-works/chord/context";
 
-import { executeGit, gitExecutionControl } from "./git-execution.js";
+import { executeGit, gitExecutionControl, type GitExecutionControl } from "./git-execution.js";
 import { ProcessExecutionError } from "./process-execution.js";
 import { requireWriteScope } from "./inputs.js";
 import type { DurableTaskHost } from "./task-host.js";
@@ -50,18 +51,25 @@ function within(parent: string, child: string) {
   return path !== ".." && !path.startsWith("../") && !isAbsolute(path);
 }
 
-// Reservations survive removed targets. Canonicalize the surviving prefix so a
-// recreated parent with different filesystem casing cannot evade nested claims.
-async function canonicalReservationPath(path: string): Promise<string> {
+type ReservationNamespace = { canonical: string; absentParent: string | null };
+
+// Node does not expose volume/per-directory equivalence for absent names. Do not
+// guess by case-folding or probe/create a user's target: conservatively exclude
+// the surviving parent namespace until the absent reservation is resolved.
+async function reservationNamespace(path: string): Promise<ReservationNamespace> {
   try {
-    return await realpath(path);
+    return { canonical: await realpath(path), absentParent: null };
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     const parent = dirname(path);
 
     if (parent === path) throw error;
+    const surviving = await reservationNamespace(parent);
 
-    return join(await canonicalReservationPath(parent), basename(path));
+    return {
+      canonical: join(surviving.canonical, basename(path)),
+      absentParent: surviving.absentParent ?? surviving.canonical,
+    };
   }
 }
 
@@ -117,9 +125,26 @@ function requireReservation(record: AssignmentRecord, claim: ClaimLock) {
   }
 }
 
+// Host-only lexical authority. Never register this callback as a model tool.
+export type PreparedAssignmentAcknowledgement = {
+  readonly binding: Readonly<GitBinding>;
+  acknowledge(tx: Tx): Promise<void>;
+};
+
+export type OwnedAssignmentMutation = {
+  readonly id: string;
+  readonly worktree: string;
+  readonly writePaths: readonly string[];
+  readonly control: GitExecutionControl;
+  revalidate(): Promise<void>;
+  prepareAcknowledgement(): Promise<PreparedAssignmentAcknowledgement>;
+};
+
 export class WritableWorkspaces {
   private readonly claims = new Map<string, ClaimLock>();
   private pending: Promise<void> = Promise.resolve();
+  private readonly mutations = new Map<string, Promise<void>>();
+  private readonly mutationAbort = new AbortController();
   private stopped = false;
   private blocker: string | undefined;
   private unresolvedActivity = false;
@@ -129,6 +154,7 @@ export class WritableWorkspaces {
     if (!(error instanceof ProcessExecutionError) || error.outcome.quiescent) return false;
     this.unresolvedActivity = true;
     this.blocker = error.message;
+    this.mutationAbort.abort(new Error("Unresolved workspace activity"));
 
     return true;
   }
@@ -139,11 +165,14 @@ export class WritableWorkspaces {
     return this.blocker;
   }
 
-  private exclusive<T>(operation: () => Promise<T>) {
+  private exclusive<T>(operation: () => Promise<T>, registration = false) {
     if (this.stopped) return Promise.reject(new Error("Task workspace owner is closing"));
 
     const result = this.pending.then(async () => {
       if (this.unresolvedActivity) throw new Error(this.blocker);
+
+      if (!registration && this.mutations.size)
+        throw new Error("Workspace mutation active; retry after scope exit");
 
       try {
         return await operation();
@@ -163,16 +192,244 @@ export class WritableWorkspaces {
 
   async drain() {
     this.stopped = true;
+    this.mutationAbort.abort(new Error("Task workspace owner is closing"));
     await this.pending;
+    await Promise.all(this.mutations.values());
 
     if (this.unresolvedActivity) throw new Error(this.blocker);
   }
 
   releaseKernelClaims() {
+    if (this.mutations.size) throw new Error("Assignment mutations have not drained");
+
     if (this.unresolvedActivity) throw new Error(this.blocker);
 
     for (const claim of this.claims.values()) claim.release();
     this.claims.clear();
+  }
+
+  // Same-assignment scopes queue; independent assignments do not share the
+  // callback wait. Callers must await all real IO/cleanup and propagate any
+  // unresolved ProcessExecutionError; returning is not proof of child quiescence.
+  // Administrative mutations reject while scopes are active,
+  // avoiding reentrant release/reconcile deadlocks. drain cancels then waits.
+  withOwnedAssignment<T>(
+    id: string,
+    expectedInput: GitBinding,
+    controlInput: GitExecutionControl,
+    context: Context,
+    operation: (scope: OwnedAssignmentMutation) => Promise<T>,
+  ): Promise<T> {
+    const expected = { ...expectedInput };
+    const deadline = controlInput.deadline;
+
+    if (!Number.isFinite(deadline))
+      return Promise.reject(new Error("Invalid assignment mutation deadline"));
+    const deadlineAbort = new AbortController();
+
+    const timer = setTimeout(
+      () => deadlineAbort.abort(new Error("Assignment mutation deadline expired")),
+      Math.max(1, Math.min(2_147_483_647, deadline - Date.now())),
+    );
+
+    const control = Object.freeze({
+      deadline,
+      signal: AbortSignal.any([
+        deadlineAbort.signal,
+        controlInput.signal,
+        context.abortSignal ?? new AbortController().signal,
+        this.mutationAbort.signal,
+      ]),
+    });
+
+    const registration = this.exclusive(async () => {
+      const previous = this.mutations.get(id) ?? Promise.resolve();
+
+      const running = previous.then(() =>
+        this.ownedMutation(id, expected, control, context, operation),
+      );
+
+      const tail = running.then(
+        () => {},
+        () => {},
+      );
+
+      this.mutations.set(id, tail);
+      void tail.then(() => {
+        if (this.mutations.get(id) === tail) this.mutations.delete(id);
+      });
+
+      return { running };
+    }, true);
+
+    return registration.then(({ running }) => running).finally(() => clearTimeout(timer));
+  }
+
+  private async ownedMutation<T>(
+    id: string,
+    expected: GitBinding,
+    control: GitExecutionControl,
+    context: Context,
+    operation: (scope: OwnedAssignmentMutation) => Promise<T>,
+  ) {
+    let active = true;
+    const scopeAbort = new AbortController();
+
+    const scopeControl = Object.freeze({
+      deadline: control.deadline,
+      signal: AbortSignal.any([control.signal, scopeAbort.signal]),
+    });
+
+    let accepting = true;
+
+    const scopeLive = () => {
+      if (!accepting) throw new Error("Assignment mutation scope is not live");
+    };
+
+    let original: AssignmentRecord | undefined;
+    let repository: GitBinding | undefined;
+    let preparedBinding: GitBinding | undefined;
+    let acknowledgementAttempted = false;
+    const claim = this.claims.get(id);
+
+    const live = () => {
+      control.signal.throwIfAborted();
+
+      if (
+        !active ||
+        this.stopped ||
+        this.blocker ||
+        this.unresolvedActivity ||
+        !claim ||
+        this.claims.get(id) !== claim
+      )
+        throw new Error("Assignment mutation ownership is not live");
+
+      if (!Number.isFinite(control.deadline) || Date.now() >= control.deadline)
+        throw new Error("Assignment mutation deadline expired");
+    };
+
+    const readCurrent = async () => {
+      live();
+      const state = await this.host.harness.snapshot(WorkspacesDoc, context);
+      const metadata = await this.host.harness.snapshot(TaskMetadataDoc, context);
+      live();
+      const record = state?.assignments.find((entry) => entry.id === id);
+
+      if (
+        !record?.binding ||
+        record.status !== "admitted" ||
+        !state?.repository ||
+        state.repository.worktree !== metadata?.record?.repositoryRoot ||
+        state.effects.some((effect) => effect.status !== "observed")
+      )
+        throw new Error("Assignment mutation requires resolved owned documents");
+      requireOwnedAssignment(this.host, record, state.repository);
+
+      if (!claim) throw new Error("Assignment claim is not held");
+      requireReservation(record, claim);
+
+      if (!original) {
+        await requireSameGit(expected, record.binding, control);
+        original = record;
+        repository = state.repository;
+      } else {
+        if (
+          JSON.stringify({ ...record, binding: original.binding }) !== JSON.stringify(original) ||
+          JSON.stringify(state.repository) !== JSON.stringify(repository) ||
+          (JSON.stringify(record.binding) !== JSON.stringify(expected) &&
+            !(
+              acknowledgementAttempted &&
+              JSON.stringify(record.binding) === JSON.stringify(preparedBinding)
+            ))
+        )
+          throw new Error("Assignment expected binding or ownership changed");
+      }
+
+      await requireSameGit(state.repository, undefined, control);
+      await verifyContextHashes(record.contextHashes, control);
+      live();
+
+      return record;
+    };
+
+    const revalidate = async () => {
+      const record = await readCurrent();
+      await requireSameGit(record.binding ?? expected, undefined, control);
+      await readCurrent();
+      live();
+    };
+
+    try {
+      await revalidate();
+
+      const scope: OwnedAssignmentMutation = Object.freeze({
+        id,
+        worktree: expected.worktree,
+        writePaths: Object.freeze([...(original?.writePaths ?? [])]),
+        control: scopeControl,
+        revalidate: async () => {
+          scopeLive();
+          await revalidate();
+          scopeLive();
+        },
+        prepareAcknowledgement: async () => {
+          scopeLive();
+          await readCurrent();
+          const observed = await inspectGit(expected.worktree, control);
+          // T5 owns approved effect policy (including exact commit HEAD changes).
+          // This owner pins the physical worktree/common-dir/branch identity.
+          requireSameGitIdentity(expected, { ...observed, head: expected.head });
+          await readCurrent();
+          await requireSameGit(observed, undefined, control);
+          live();
+          scopeLive();
+          const binding = Object.freeze({ ...observed });
+          let used = false;
+
+          return Object.freeze({
+            binding,
+            acknowledge: async (tx: Tx) => {
+              scopeLive();
+              live();
+
+              if (used || !original) throw new Error("Assignment acknowledgement is stale");
+              const document = await tx.doc(WorkspacesDoc);
+              scopeLive();
+              live();
+              const record = document.assignments.find((entry) => entry.id === id);
+
+              if (
+                JSON.stringify(record) !== JSON.stringify(original) ||
+                JSON.stringify(document.repository) !== JSON.stringify(repository) ||
+                document.effects.some((effect) => effect.status !== "observed")
+              )
+                throw new Error("Assignment acknowledgement expected binding is stale");
+
+              if (!record) throw new Error("Missing owned assignment");
+              preparedBinding = { ...binding };
+              acknowledgementAttempted = true;
+              record.binding = { ...binding };
+              used = true;
+            },
+          });
+        },
+      });
+
+      const result = await operation(scope);
+      accepting = false;
+      scopeAbort.abort(new Error("Assignment mutation scope is not live"));
+      await revalidate();
+
+      return result;
+    } catch (error) {
+      if (error instanceof Error) this.retainUnresolved(error);
+      throw error;
+    } finally {
+      accepting = false;
+      scopeAbort.abort(new Error("Assignment mutation scope is not live"));
+      active = false;
+    }
   }
 
   async inspect(context: Context) {
@@ -183,6 +440,7 @@ export class WritableWorkspaces {
   }
 
   async reopen(context: Context) {
+    if (this.mutations.size) throw new Error("Assignment mutations have not drained");
     this.callerSourceDrift = false;
     const control = gitExecutionControl(context.abortSignal);
     const state = await this.host.harness.snapshot(WorkspacesDoc, context);
@@ -346,11 +604,24 @@ export class WritableWorkspaces {
 
         const globalPaths = new Set([...registered, ...reserved]);
 
-        for (const path of registered.concat(reserved))
-          globalPaths.add(await canonicalReservationPath(path));
+        const absentParents = new Set<string>();
+
+        for (const path of registered.concat(reserved)) {
+          const namespace = await reservationNamespace(path);
+          globalPaths.add(namespace.canonical);
+
+          if (namespace.absentParent) absentParents.add(namespace.absentParent);
+        }
 
         for (const approval of ordered) {
           await canonicalTarget(approval.worktree);
+
+          for (const parent of absentParents) {
+            if (within(parent, approval.worktree) || within(approval.worktree, parent))
+              throw new Error(
+                "Absent unreleased reservation/worktree has an ambiguous filesystem namespace; explicit operator inspection required",
+              );
+          }
 
           for (const path of globalPaths) {
             // Exact-path claim/reservation checks below retain their existing
@@ -601,6 +872,7 @@ export class WritableWorkspaces {
         }
 
         for (const binding of bindings.values()) await requireSameGit(binding, undefined, control);
+        await requireSameGit(state.repository, undefined, control);
         const effectId = randomUUID();
         await this.host.harness.commit(async (tx) => {
           const document = await tx.doc(WorkspacesDoc);
@@ -616,6 +888,9 @@ export class WritableWorkspaces {
 
         for (const record of state.assignments.filter((entry) => bindings.has(entry.id)))
           writeRecord(join(record.claimDirectory, "reservation.json"), record.reservation);
+        await requireSameGit(state.repository, undefined, control);
+
+        for (const binding of bindings.values()) await requireSameGit(binding, undefined, control);
         await this.host.harness.commit(async (tx) => {
           const document = await tx.doc(WorkspacesDoc);
 
@@ -640,6 +915,10 @@ export class WritableWorkspaces {
         this.blocker = undefined;
         this.callerSourceDrift = false;
       } catch (error) {
+        if (!this.unresolvedActivity)
+          this.blocker =
+            "Workspace reconciliation did not establish current source; explicit inspection required";
+
         if (error instanceof Error && this.retainUnresolved(error)) {
           for (const [id, claim] of acquired) this.claims.set(id, claim);
           acquired.clear();

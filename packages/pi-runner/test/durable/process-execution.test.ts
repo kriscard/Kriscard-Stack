@@ -35,6 +35,7 @@ test("shared process execution separates stdout/stderr and observes root, stream
       reason: "exited",
       exitCode: 0,
       stdout: "stdout",
+      stdoutValidUtf8: true,
       stderr: "stderr",
       outputBytes: 12,
       quiescent: true,
@@ -160,6 +161,7 @@ test("combined output is bounded to one MiB even for invalid UTF-8 and is draine
       new AbortController().signal,
     );
 
+    expect(outcome.stdoutValidUtf8).toBe(false);
     expect(outcome).toMatchObject({
       reason: "output-limit",
       outputBytes: 1024 * 1024,

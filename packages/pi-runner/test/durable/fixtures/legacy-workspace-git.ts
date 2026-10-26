@@ -53,7 +53,10 @@ function canonicalTarget(path: string) {
   return path;
 }
 
-export function inspectGit(worktree: string, format: "framed" | "legacy" = "framed"): GitBinding {
+export function inspectGit(
+  worktree: string,
+  format: "framed" | "legacy" | "v2" = "framed",
+): GitBinding {
   canonicalTarget(worktree);
 
   if (git(worktree, ["rev-parse", "--show-toplevel"]).trim() !== worktree) {
@@ -70,7 +73,8 @@ export function inspectGit(worktree: string, format: "framed" | "legacy" = "fram
   const branch = git(worktree, ["symbolic-ref", "--short", "HEAD"]).trim();
   const digest = createHash("sha256");
 
-  if (format === "framed") digest.update("kstack-source-v2\0");
+  if (format !== "legacy")
+    digest.update(format === "v2" ? "kstack-source-v2\0" : "kstack-source-v3\0");
   const names = git(worktree, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]);
   digest.update(
     JSON.stringify([
@@ -88,7 +92,7 @@ export function inspectGit(worktree: string, format: "framed" | "legacy" = "fram
     if (format === "legacy") digest.update(JSON.stringify([name, info?.mode ?? null]));
 
     if (!info) {
-      if (format === "framed") digest.update(JSON.stringify([name, null, "missing", null]));
+      if (format !== "legacy") digest.update(JSON.stringify([name, null, "missing", null]));
       continue;
     }
 
@@ -96,7 +100,9 @@ export function inspectGit(worktree: string, format: "framed" | "legacy" = "fram
       throw new Error("Material source crosses a directory symbolic link");
 
     const content = info.isSymbolicLink()
-      ? readlinkSync(path)
+      ? format === "framed"
+        ? readlinkSync(path, { encoding: "buffer" })
+        : readlinkSync(path)
       : info.isFile()
         ? readFileSync(path)
         : undefined;
