@@ -127,12 +127,15 @@ function slowGit(root: string, cwd: string) {
   writeFileSync(
     script,
     `import { spawn } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { renameSync, writeFileSync } from 'node:fs';
 if (process.argv[2] === 'leaf') {
   process.send('ready'); setInterval(() => {}, 1000);
 } else {
   const leaf = spawn(process.execPath, [process.argv[1], 'leaf'], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
-  leaf.once('message', () => writeFileSync(${JSON.stringify(readyPath)}, JSON.stringify([process.pid, leaf.pid])));
+  leaf.once('message', () => {
+    writeFileSync(${JSON.stringify(`${readyPath}.pending`)}, JSON.stringify([process.pid, leaf.pid]));
+    renameSync(${JSON.stringify(`${readyPath}.pending`)}, ${JSON.stringify(readyPath)});
+  });
   process.on('SIGTERM', () => { leaf.once('exit', () => process.exit(0)); leaf.kill('SIGTERM'); });
 }
 `,
@@ -390,7 +393,7 @@ test(
       writeFileSync(
         join(root, "slow-diff.mjs"),
         `import { spawn } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { renameSync, writeFileSync } from 'node:fs';
 if (process.argv[2] === 'leaf') {
   process.send('ready');
   process.on('SIGTERM', () => { writeFileSync(${JSON.stringify(join(root, "escaped-exit"))}, 'exiting'); process.exit(0); });
@@ -398,7 +401,8 @@ if (process.argv[2] === 'leaf') {
 } else {
   const leaf = spawn(process.execPath, [process.argv[1], 'leaf'], { detached: true, stdio: ['ignore', process.stdout, process.stderr, 'ipc'] });
   leaf.once('message', () => {
-    writeFileSync(${JSON.stringify(join(root, "ready.json"))}, JSON.stringify([process.pid, leaf.pid]));
+    writeFileSync(${JSON.stringify(join(root, "ready.json.pending"))}, JSON.stringify([process.pid, leaf.pid]));
+    renameSync(${JSON.stringify(join(root, "ready.json.pending"))}, ${JSON.stringify(join(root, "ready.json"))});
     leaf.disconnect(); leaf.unref();
   });
 }
@@ -487,12 +491,15 @@ if (process.argv[2] === 'leaf') {
               acknowledged = resolve;
             });
 
-            const watcher = watch(root, () => {
+            const observeExit = () => {
               if (existsSync(join(root, "escaped-exit"))) acknowledged();
-            });
+            };
+
+            const watcher = watch(root, observeExit);
+            observeExit();
 
             try {
-              process.kill(escapedPid, "SIGTERM");
+              if (!existsSync(join(root, "escaped-exit"))) process.kill(escapedPid, "SIGTERM");
               await stopped;
             } finally {
               watcher.close();
