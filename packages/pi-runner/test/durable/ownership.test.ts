@@ -35,7 +35,11 @@ import {
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { expect, expectTypeOf, test } from "vitest";
 
-import { acquireTaskFiles, supportsTaskFilesystem } from "../../src/durable/task-files.js";
+import {
+  acquireTaskFiles,
+  inspectTaskFilesystem,
+  supportsTaskFilesystem,
+} from "../../src/durable/task-files.js";
 import { DurableTaskHost } from "../../src/durable/task-host.js";
 import {
   ConversationIdentityDoc,
@@ -472,9 +476,34 @@ test("already-cancelled startup creates no task state", async () => {
   });
 });
 
+test("filesystem inspection honors original cancellation and deadlines on real local storage", async () => {
+  const controller = new AbortController();
+  controller.abort(new Error("filesystem inspection cancelled"));
+  await expect(
+    inspectTaskFilesystem(tmpdir(), { signal: controller.signal, deadline: Date.now() + 1000 }),
+  ).rejects.toThrow("filesystem inspection cancelled");
+
+  const signal = new AbortController().signal;
+  await expect(
+    inspectTaskFilesystem(tmpdir(), { signal, deadline: Date.now() - 1 }),
+  ).rejects.toThrow("Filesystem inspection deadline expired");
+
+  const type = await inspectTaskFilesystem(tmpdir(), { signal, deadline: Date.now() + 1000 });
+  expect(supportsTaskFilesystem(process.platform, type)).toBe(true);
+});
+
+test("Darwin filesystem admission uses the verified APFS name, not its numeric type", () => {
+  expect(supportsTaskFilesystem("darwin", "apfs")).toBe(true);
+  expect(supportsTaskFilesystem("darwin", 25)).toBe(false);
+  expect(supportsTaskFilesystem("darwin", 26)).toBe(false);
+  expect(supportsTaskFilesystem("darwin", "nfs")).toBe(false);
+  expect(supportsTaskFilesystem("darwin", "smbfs")).toBe(false);
+  expect(supportsTaskFilesystem("darwin", "unknown")).toBe(false);
+});
+
 test("network, ambiguous and unsupported platform filesystems are rejected", () => {
   expect(supportsTaskFilesystem("linux", 0xef53)).toBe(true);
-  expect(supportsTaskFilesystem("darwin", 26)).toBe(true);
+  expect(supportsTaskFilesystem("darwin", 26)).toBe(false);
   expect(supportsTaskFilesystem("linux", 0x6969)).toBe(false);
   expect(supportsTaskFilesystem("linux", 0x65735546)).toBe(false);
   expect(supportsTaskFilesystem("linux", 0)).toBe(false);

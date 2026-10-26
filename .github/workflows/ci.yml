@@ -36,7 +36,7 @@ jobs:
         run: |
           node -e 'const fs = require("node:fs"); const os = require("node:os"); console.log(JSON.stringify({ node: process.version, platform: process.platform, checkoutType: fs.statfsSync(process.cwd()).type, temporaryType: fs.statfsSync(os.tmpdir()).type }));'
           if [[ "$RUNNER_OS" == "macOS" ]]; then
-            stat -f '%T' "${TMPDIR:-/tmp}"
+            /bin/df -P -T apfs "${TMPDIR:-/tmp}"
           else
             stat -f -c '%T' "${TMPDIR:-/tmp}"
           fi

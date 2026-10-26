@@ -149,7 +149,7 @@ export async function releaseStrandedWorktree(
   context.abortSignal?.throwIfAborted();
   const control = gitExecutionControl(context.abortSignal);
   const binding = await inspectGit(worktree, control);
-  const claim = await acquireClaim(binding.commonDirectory, worktree, false);
+  const claim = await acquireClaim(binding.commonDirectory, worktree, false, control);
   let taskLock: Awaited<ReturnType<typeof lockPrivateFile>> | undefined;
   let unresolvedActivity = false;
 

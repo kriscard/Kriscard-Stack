@@ -12,7 +12,6 @@ import {
   readdirSync,
   realpathSync,
   renameSync,
-  statfsSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -20,7 +19,8 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import type { GitBinding } from "./workspace-git.js";
 import type { OperatorProof } from "./workspace-release.js";
 
-import { supportsTaskFilesystem } from "./task-files.js";
+import { gitExecutionControl, type GitExecutionControl } from "./git-execution.js";
+import { inspectTaskFilesystem, supportsTaskFilesystem } from "./task-files.js";
 
 export function privateDirectory(path: string) {
   const info = lstatSync(path);
@@ -91,8 +91,13 @@ export async function lockPrivateFile(path: string, create: boolean) {
 
 export type ClaimLock = Awaited<ReturnType<typeof lockPrivateFile>> & { directory: string };
 
-export async function acquireAdmissionGate(commonDirectory: string) {
-  if (!supportsTaskFilesystem(process.platform, statfsSync(commonDirectory).type))
+export async function acquireAdmissionGate(
+  commonDirectory: string,
+  control: GitExecutionControl = gitExecutionControl(),
+) {
+  if (
+    !supportsTaskFilesystem(process.platform, await inspectTaskFilesystem(commonDirectory, control))
+  )
     throw new Error("Worktree claims require supported local storage");
   const directory = join(commonDirectory, "kstack-durable");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -106,8 +111,11 @@ export async function acquireClaim(
   commonDirectory: string,
   worktree: string,
   create: boolean,
+  control: GitExecutionControl = gitExecutionControl(),
 ): Promise<ClaimLock> {
-  if (!supportsTaskFilesystem(process.platform, statfsSync(commonDirectory).type)) {
+  if (
+    !supportsTaskFilesystem(process.platform, await inspectTaskFilesystem(commonDirectory, control))
+  ) {
     throw new Error("Worktree claims require supported local storage");
   }
 

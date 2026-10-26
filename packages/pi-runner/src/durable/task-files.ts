@@ -14,13 +14,48 @@ import { isAbsolute, join } from "node:path";
 
 import type { Context } from "@earendil-works/chord";
 
+import { gitExecutionControl, type GitExecutionControl } from "./git-execution.js";
 import { requireTaskId } from "./inputs.js";
+import { ProcessExecutionError, runProcess } from "./process-execution.js";
 
-// Linux magic.h: ext, XFS, Btrfs, tmpfs, overlay. Darwin APFS reports type 26.
-const linuxFilesystems = new Set([0xef53, 0x58465342, 0x9123683e, 0x01021994, 0x794c7630]);
+// Linux magic.h: ext, XFS, Btrfs, tmpfs, overlay.
+const linuxFilesystems = new Set<number | string>([
+  0xef53, 0x58465342, 0x9123683e, 0x01021994, 0x794c7630,
+]);
 
-export function supportsTaskFilesystem(platform: string, type: number) {
-  return platform === "darwin" ? type === 26 : platform === "linux" && linuxFilesystems.has(type);
+export function supportsTaskFilesystem(platform: string, type: number | string) {
+  if (platform === "darwin") return type === "apfs";
+
+  return platform === "linux" && linuxFilesystems.has(type);
+}
+
+export async function inspectTaskFilesystem(root: string, control: GitExecutionControl) {
+  control.signal.throwIfAborted();
+  const remaining = control.deadline - Date.now();
+
+  if (!Number.isFinite(control.deadline) || remaining <= 0)
+    throw new Error("Filesystem inspection deadline expired");
+
+  if (process.platform !== "darwin") return statfsSync(root).type;
+
+  // Darwin's numeric filesystem type can vary across hosts; verify the OS name.
+  const result = await runProcess(
+    "/bin/df",
+    ["-P", "-T", "apfs", root],
+    root,
+    { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
+    Math.min(1000, remaining),
+    control.signal,
+  );
+
+  if (result.reason !== "exited" || !result.quiescent)
+    throw new ProcessExecutionError(result, "Task filesystem inspection");
+
+  return result.exitCode === 0 &&
+    result.stdoutValidUtf8 &&
+    result.stdout.trim().split("\n").length >= 2
+    ? "apfs"
+    : "unknown";
 }
 
 function requirePrivateOwner(info: Stats) {
@@ -81,6 +116,7 @@ export async function acquireTaskFiles(
 ): Promise<TaskFiles> {
   requireTaskId(taskId);
   context.abortSignal?.throwIfAborted();
+  const control = gitExecutionControl(context.abortSignal);
 
   if (process.platform !== "darwin" && process.platform !== "linux") {
     throw new Error("Durable task ownership requires local macOS or Linux storage");
@@ -100,7 +136,7 @@ export async function acquireTaskFiles(
   const root = realpathSync(rootInput);
   requirePrivateDirectory(root);
 
-  if (!supportsTaskFilesystem(process.platform, statfsSync(root).type)) {
+  if (!supportsTaskFilesystem(process.platform, await inspectTaskFilesystem(root, control))) {
     throw new Error(
       "Unsupported task filesystem; network/shared or unknown storage is not admitted",
     );

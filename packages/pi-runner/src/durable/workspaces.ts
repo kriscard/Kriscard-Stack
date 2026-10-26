@@ -477,6 +477,7 @@ export class WritableWorkspaces {
             state.repository.commonDirectory,
             record.worktree,
             false,
+            control,
           );
 
           acquired.push(claim);
@@ -585,7 +586,7 @@ export class WritableWorkspaces {
       const paths = active.map((record) => record.worktree);
       const branches = new Set(active.map((record) => record.branch));
       const ids = new Set(state?.assignments.map((record) => record.id));
-      const gate = await acquireAdmissionGate(repository.commonDirectory);
+      const gate = await acquireAdmissionGate(repository.commonDirectory, control);
 
       try {
         await requireSameGit(repository, undefined, control);
@@ -689,7 +690,13 @@ export class WritableWorkspaces {
 
         try {
           for (const approval of ordered) {
-            const claim = await acquireClaim(repository.commonDirectory, approval.worktree, true);
+            const claim = await acquireClaim(
+              repository.commonDirectory,
+              approval.worktree,
+              true,
+              control,
+            );
+
             acquired.set(approval.id, claim);
             const previous = readReservation(claim, approval.worktree);
 
@@ -843,7 +850,7 @@ export class WritableWorkspaces {
 
           const claim =
             this.claims.get(record.id) ??
-            (await acquireClaim(state.repository.commonDirectory, record.worktree, false));
+            (await acquireClaim(state.repository.commonDirectory, record.worktree, false, control));
 
           if (!this.claims.has(record.id)) acquired.set(record.id, claim);
           requireClaimReference(record, claim);
@@ -961,7 +968,8 @@ export class WritableWorkspaces {
         throw new Error("Assignment claim is not held");
 
       const claim =
-        borrowed ?? (await acquireClaim(state.repository.commonDirectory, record.worktree, false));
+        borrowed ??
+        (await acquireClaim(state.repository.commonDirectory, record.worktree, false, control));
 
       try {
         requireReservation(record, claim);
