@@ -128,6 +128,13 @@ async function ownedIdentity(
 
       if (otherProvider.sessionId === provider.sessionId)
         throw new Error("Conflicting provider admission identity");
+
+      if (identity.role === "writer") {
+        const otherIdentity = await tx.doc(ConversationIdentityDoc, other.id);
+
+        if (otherIdentity.role === "writer" && otherIdentity.assignmentId === identity.assignmentId)
+          throw new Error("Conflicting writer assignment");
+      }
     }
   }
 
