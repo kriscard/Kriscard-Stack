@@ -27,12 +27,12 @@ A function, class, component, package entry point, service API, event, command, 
 
 The tempting default is to implement first and add comments that narrate the mechanics afterward. Replace it with this short design probe:
 
-1. Name the abstraction and the responsibility it owns.
+1. Name the abstraction and its responsibility. Record policy ownership as "<named actor> owns <decision>". Map that actor to a caller or implementation role only when evidence establishes the relationship; otherwise keep its domain name in the contract and the relationship unresolved.
 2. State the accepted inputs and their constraints.
 3. State the outputs and guarantees a caller may rely on.
 4. Name errors, side effects, lifecycle or ordering rules, and invariants that affect correct use.
-5. Check that the description uses caller concepts rather than implementation steps.
-6. Treat difficulty explaining the contract as a design warning: distinguish avoidable implementation leakage from inherent constraints. Hide mechanics callers need not know; keep relevant policy with its rightful caller or specialized owner. A split or new wrapper must reduce total burden, not merely shorten the description. Use `codebase-design` for that analysis and `architect` for consequential choices.
+5. Check that the description uses caller concepts rather than implementation steps. Trace every promise and caller obligation to an established requirement, contract evidence, or an explicitly selected authorized design choice. Move unsupported claims into open questions before publishing the contract.
+6. Treat difficulty explaining the contract as a design warning: distinguish avoidable implementation leakage from inherent constraints. Hide mechanics callers need not know; keep relevant policy with its evidenced owner. A split or new wrapper must reduce total burden, not merely shorten the description. Use `codebase-design` for that analysis and `architect` for consequential choices.
 7. Revise the contract and implementation together as coding and testing reveal better semantics, within the authorized task. Comments-first is an iterative design probe, not a frozen upfront specification.
 
 Separate established requirements and settled design choices from proposals and unresolved questions. A new interface may deliberately choose guarantees within the task's authority; an existing contract needs evidence before claiming those guarantees already hold. Label tentative semantics as proposals, resolve caller-essential unknowns before treating the contract as final, and never invent ordering, atomicity, cancellation, or lifecycle promises to fill gaps. A polished comment is not evidence that a promise exists.
