@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 
+import { cleanupSessionResources } from "@earendil-works/pi-ai";
 import { watchEvents } from "@earendil-works/pi-durable";
 
 import { context, openSession, settle, type SessionOptions } from "./session.js";
@@ -102,6 +103,12 @@ export async function runDurable(options: DurableOptions): Promise<number> {
     readline.off("SIGINT", interrupt);
     readline.close();
     events.stop();
-    await session.close();
+
+    try {
+      await session.close();
+    } finally {
+      // This CLI process owns its provider transports; release them as native Pi does on disposal.
+      cleanupSessionResources();
+    }
   }
 }

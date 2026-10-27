@@ -17,6 +17,8 @@ test("launches native Pi with Kriscard mode enabled", () => {
     "/skills/kriscard-mode",
     "--append-system-prompt",
     expect.stringContaining(KRISCARD_MODE_DIRECTIVE),
+    "--append-system-prompt",
+    "/skills/kriscard-mode/SKILL.md",
   ]);
 });
 
@@ -31,6 +33,8 @@ test("passes native Pi arguments through unchanged", () => {
     "/skills/kriscard-mode",
     "--append-system-prompt",
     expect.stringContaining(KRISCARD_MODE_DIRECTIVE),
+    "--append-system-prompt",
+    "/skills/kriscard-mode/SKILL.md",
     "--continue",
     "Finish the feature",
   ]);

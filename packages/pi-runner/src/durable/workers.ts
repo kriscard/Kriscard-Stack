@@ -42,7 +42,7 @@ const Anchor = defineTask<null, { phase: "done" }, null>({
     runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context),
 });
 
-const Reporter = defineTask<
+export const Reporter = defineTask<
   { name: string; conversationId: ConversationId; message: string; followUp: boolean },
   { phase: "deliver" } | { phase: "report"; report?: string },
   null
@@ -126,7 +126,7 @@ const Reporter = defineTask<
 const subagent = defineTool({
   name: "subagent",
   description:
-    "Manage persistent background workers. Spawn needs a unique name, message and existing cwd. Send steers by default; followUp queues instead. Stop aborts current work, preserving the conversation. Status lists workers. Follow kstack-orchestrator for workflow and Git isolation.",
+    "Manage persistent background workers. Spawn needs a unique name, message and existing cwd. Send steers by default; followUp queues instead. Stop aborts current work, preserving the conversation. Status lists workers. Answers arrive as follow-up inputs after your current answer. Finish your answer after spawning or sending; the SDK starts the next turn when a report arrives. Follow kstack-orchestrator for workflow and Git isolation.",
   parameters: Type.Object({
     action: Type.Union([
       Type.Literal("spawn"),

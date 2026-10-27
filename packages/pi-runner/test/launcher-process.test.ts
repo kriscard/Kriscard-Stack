@@ -35,7 +35,7 @@ test.each([
     // SAFETY: The executable above emits this exact probe record.
     const received = JSON.parse(output) as { args: string[]; cwd: string };
     expect(received.cwd).toBe(directory);
-    expect(received.args).toContain("--skill");
+    expect(received.args.slice(0, 2)).toEqual(["--extension", root]);
     expect(received.args.includes("--print")).toBe(print);
     const instructions = received.args[received.args.indexOf("--append-system-prompt") + 1];
     expect(instructions).toContain("interactive Pi frontend");

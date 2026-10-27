@@ -35,5 +35,10 @@
     "@types/fs-ext": "2.0.3",
     "@types/node": "24.10.0",
     "typescript": "7.0.2"
+  },
+  "pi": {
+    "skills": [
+      "dist/skills"
+    ]
   }
 }

@@ -34,7 +34,7 @@
     },
     {
       "id": "missing-subagent-tool-blocks-delegation",
-      "request": "Delegate two independent changes, but the current host has no subagent tool.",
+      "request": "Inside the Pi Durable backend, delegate two independent changes, but its SDK subagent tool is unavailable.",
       "expect": [
         "orchestration blocked",
         "single-agent Kstack remains available",

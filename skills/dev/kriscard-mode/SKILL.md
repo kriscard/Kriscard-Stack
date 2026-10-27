@@ -42,10 +42,10 @@ Read this index at task start. Load the full principle only when current evidenc
 
 ## Compose skills
 
-A playbook names the job to perform, not every implementation rule. Load only the installed skills
-whose descriptions match the current step and technology. General-purpose expertise belongs to the
-separately owned Skills collection; discover installed skills through the host rather than treating
-that ownership name as a filesystem path.
+A playbook names the job to perform, not every implementation rule. Before performing a step, read
+and apply the full `SKILL.md` of each installed skill whose description matches its work and technology.
+General-purpose expertise belongs to the separately owned Skills collection; discover installed skills
+through the host rather than treating that ownership name as a filesystem path.
 
 For browser-facing frontend work, route ownership, validation and schema trust boundaries, and file
 organization to `frontend`. For React work, route component composition, hooks, state, and providers
@@ -57,7 +57,8 @@ and leave these skills unloaded for unrelated tasks.
 
 When a playbook needs consequential requirements or design planning, inspect the installed `spec`
 skill's invocation policy. If it is user-only, explain the blocking decision, ask the user to invoke
-`/spec` with the bounded brief, and stop implementation until the approved artifacts are supplied.
+`spec` with the bounded brief using the host's skill command (`/skill:spec` in Pi), and stop
+implementation until the approved artifacts are supplied.
 If model-invocable, use the host's skill mechanism and honor its approval-and-stop boundary. If it is
 unavailable, ask whether to resolve the decision in chat or wait for the skill; do not fabricate an
 invocation or approved plan. Small, clear changes may proceed directly.

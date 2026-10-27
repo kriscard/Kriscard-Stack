@@ -26,9 +26,12 @@ conversation or ask the one decision that blocks progress.
 
 The interactive Pi conversation owns coordination. Use the exact Pi Durable backend command
 advertised in its startup instructions; this works from a checkout without a global Kstack install.
-Append `run --session <private-sqlite-path> "<bounded task packet>"` and execute it through Pi's
-command tool in the intended repository. The backend performs that approved assignment and
-returns its results when the command finishes. Record the database path in the main session.
+Write the bounded task packet to a private temporary file. Append
+`run --session <private-sqlite-path> "$(cat "<packet-file>")"` and execute the command through Pi's
+command tool in the intended repository. The quoted substitution passes the packet as one argument;
+keep the command separate from the packet rather than embedding a nested heredoc. The backend
+performs that approved assignment and returns its results when the command finishes. Record the
+database path in the main session.
 
 To resume interrupted backend work, invoke the same command with `--session <same-path>` and
 no new task packet. Native Pi's `--resume` and JSONL session are separate from backend recovery.
@@ -48,9 +51,13 @@ calls for workers; do not start another backend process:
 - `status`: inspect worker names, conversation IDs, working directories and busy/idle state.
 - `stop`: abort that worker's current work and queued messages. Its conversation remains reusable.
 
-Answers arrive as `[worker <name> result]` follow-up messages. Wait for delivery instead of asking
-for status repeatedly. Report launch or tool errors; do not launch replacement workers to hide them.
-Workers cannot delegate further.
+Answers arrive as `[worker <name> result]` follow-up messages after the current answer ends.
+After spawning or messaging workers, finish the current answer so the SDK can deliver their reports.
+When a report arrives, record it and finish that answer if more reports are pending; combine the
+findings once all expected reports have arrived. The host waits for reporter tasks and the main
+conversation to become idle, as in example 22. Sleeping or polling inside a turn delays follow-up
+delivery. Report launch or tool errors; do not launch replacement workers to hide them. Workers
+cannot delegate further.
 
 If a required backend capability is unavailable, report the missing capability and stop that
 assignment. Ordinary work in the interactive Pi frontend remains available.

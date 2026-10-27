@@ -42,6 +42,16 @@ async function fixture() {
   const sessionPath = join(directory, "session.sqlite");
   await mkdir(cwd);
   await mkdir(agentDir);
+
+  for (const name of ["kriscard-mode", "kstack-orchestrator"]) {
+    const skill = join(agentDir, "skills", name, "SKILL.md");
+    await mkdir(dirname(skill), { recursive: true });
+    await writeFile(
+      skill,
+      `---\nname: ${name}\ndescription: Stale installed fixture\n---\nOLD COPY\n`,
+    );
+  }
+
   await writeFile(join(cwd, "README.md"), "Disposable test project\n");
   await writeFile(
     join(cwd, "AGENTS.md"),
@@ -229,12 +239,25 @@ async function fixture() {
     NO_COLOR: "1",
   };
 
+  const cleanupMarker = join(directory, "resource-cleaned");
+  const cleanupProbe = join(directory, "resource-probe.mjs");
+
+  const ai = pathToFileURL(
+    join(root, "packages/pi-runner/node_modules/@earendil-works/pi-ai/dist/index.js"),
+  ).href;
+
+  await writeFile(
+    cleanupProbe,
+    `import {registerSessionResourceCleanup} from ${JSON.stringify(ai)}; import {writeFileSync} from 'node:fs'; const keepAlive=setInterval(()=>{},1000); registerSessionResourceCleanup(()=>{clearInterval(keepAlive);writeFileSync(${JSON.stringify(cleanupMarker)},'released\\n');});`,
+  );
+
   const children: ReturnType<typeof spawn>[] = [];
 
-  function start(prompt?: string, input = "") {
+  function start(prompt?: string, input = "", probeResources = false) {
     const child = spawn(
       process.execPath,
       [
+        ...(probeResources ? ["--import", cleanupProbe] : []),
         bin,
         "durable",
         ...(prompt ? ["run"] : []),
@@ -257,7 +280,13 @@ async function fixture() {
     child.stdin.end(input);
     const exited = once(child, "exit").then(([code, signal]) => ({ code, signal, stdout, stderr }));
 
-    return { child, exited };
+    return {
+      child,
+      exited,
+      get stdout() {
+        return stdout;
+      },
+    };
   }
 
   async function identities() {
@@ -291,11 +320,13 @@ async function fixture() {
 
   return {
     cwd,
+    agentDir,
     writer,
     requests,
     start,
     identities,
     waiting,
+    cleanupMarker,
     setHold(value: boolean) {
       hold = value;
     },
@@ -331,8 +362,29 @@ test("built CLI loads the workflow, writes in a separate Git worktree and delive
   await expect(access(join(app.cwd, "feature.txt"))).rejects.toThrow();
   expect(JSON.stringify(app.requests[0])).toContain("KSTACK_PROJECT_INSTRUCTION");
   expect(JSON.stringify(app.requests[0])).toContain("kriscard-mode");
+
+  for (const name of ["kriscard-mode", "kstack-orchestrator"]) {
+    expect(JSON.stringify(app.requests[0])).not.toContain(
+      join(app.agentDir, "skills", name, "SKILL.md"),
+    );
+  }
+
+  expect(JSON.stringify(app.requests[0])).toContain(
+    "Answers arrive as follow-up inputs after your current answer.",
+  );
   expect(Object.keys((await app.identities()).agents).sort()).toEqual(["verifier", "writer"]);
 }, 30000);
+
+test("built Durable CLI releases SDK session resources after completing worker reports", async ({
+  onTestFinished,
+}) => {
+  const app = await fixture();
+  onTestFinished(() => app.close());
+  const running = app.start("workflow", "", true);
+  await expect.poll(() => running.stdout, { timeout: 10000 }).toContain("Workflow complete.");
+  await expect.poll(() => running.child.exitCode, { timeout: 1500 }).toBe(0);
+  expect(await readFile(app.cleanupMarker, "utf8")).toBe("released\n");
+}, 15000);
 
 test("SIGKILL and reopen preserve the worker identity and resume pending work without repeating the write", async ({
   onTestFinished,

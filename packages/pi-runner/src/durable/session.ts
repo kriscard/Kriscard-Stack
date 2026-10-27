@@ -16,14 +16,19 @@ import {
   defineExtension,
   Harness,
   section,
+  type TaskInspection,
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { flock } from "fs-ext";
 
-import { KRISCARD_MODE_DIRECTIVE, resolveKriscardModePath } from "../launcher.js";
-import { WorkerTools } from "./workers.js";
+import {
+  KRISCARD_MODE_DIRECTIVE,
+  resolveKriscardModePath,
+  resolveKriscardSkillPackage,
+} from "../launcher.js";
+import { Reporter, WorkerTools } from "./workers.js";
 
 export const context = BACKGROUND_CONTEXT;
 
@@ -40,6 +45,7 @@ export async function openSession(options: SessionOptions): Promise<DurableSessi
   const cwd = resolve(options.cwd);
   const agentDir = getAgentDir();
   const modePath = options.modePath ?? resolveKriscardModePath();
+  const skillPackage = resolveKriscardSkillPackage(modePath);
   const settings = SettingsManager.create(cwd, agentDir);
   const models = await ModelRuntime.create();
   const configurationError = models.getError();
@@ -71,7 +77,8 @@ export async function openSession(options: SessionOptions): Promise<DurableSessi
         const resources = new DefaultResourceLoader({
           cwd: directory,
           agentDir,
-          additionalSkillPaths: [dirname(modePath)],
+          additionalExtensionPaths: skillPackage ? [skillPackage] : [],
+          additionalSkillPaths: skillPackage ? [] : [dirname(modePath)],
           noExtensions: true,
           noPromptTemplates: true,
           noThemes: true,
@@ -196,16 +203,24 @@ export async function openSession(options: SessionOptions): Promise<DurableSessi
 }
 
 export async function settle(session: DurableSession): Promise<void> {
+  const isReporter = (task: TaskInspection) =>
+    task.record.kind === Reporter.definition.name && task.record.conversationId === session.root.id;
+
   for (;;) {
     const inspection = await session.harness.inspect(context);
     const blocked = inspection.tasks.find((task) => task.state.kind === "blocked");
 
     if (blocked) throw new Error(`Task ${blocked.record.id} is blocked: ${blocked.state.kind}`);
 
-    if (!inspection.tasks.length) return;
-
+    // Ordinary idle waits exclude background reporters; wait for those explicitly, as in example 22.
     await Promise.all(
-      inspection.tasks.map((task) => session.harness.waitForTask(task.record.id, context)),
+      inspection.tasks
+        .filter(isReporter)
+        .map((task) => session.harness.waitForTask(task.record.id, context)),
     );
+    await session.root.waitForIdle(context);
+
+    // A report can start another assignment, such as verification after a writer finishes.
+    if (!(await session.harness.inspect(context)).tasks.some(isReporter)) return;
   }
 }
