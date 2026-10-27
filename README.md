@@ -105,10 +105,10 @@ pnpm run check
 pnpm exec oxlint --deny-warnings --format=agent
 ```
 
-Process tests verify the native Pi handoff without opening Durable state. Backend integration
-tests use an isolated local scripted model endpoint with the real CLI, SDK, SQLite, coding tools
-and Git worktrees. They test backend execution and SIGKILL/reopen recovery, not model judgment,
-a native Pi agent's decision to delegate, or live-provider quality.
+Launcher unit tests check argument construction; skill-selection tests exercise Pi's resource
+loader. Backend integration tests use an isolated local scripted model endpoint with the real CLI,
+SDK, SQLite, coding tools and Git worktrees. They test backend execution and SIGKILL/reopen recovery,
+not native Pi startup, model judgment, a native Pi agent's decision to delegate, or live-provider quality.
 
 The runtime follows Pi Durable's [coding agent](https://github.com/earendil-works/pi/blob/main/packages/durable/test/examples/25-coding-agent.ts),
 [background subagents](https://github.com/earendil-works/pi/blob/main/packages/durable/test/examples/22-subagent-background.ts)
