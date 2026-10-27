@@ -31,7 +31,7 @@ The tempting default is to implement first and add comments that narrate the mec
 2. State the accepted inputs and their constraints.
 3. State the outputs and guarantees a caller may rely on.
 4. Name errors, side effects, lifecycle or ordering rules, and invariants that affect correct use.
-5. Check that the description uses caller concepts rather than implementation steps. Trace every promise and caller obligation to an established requirement, contract evidence, or an explicitly selected authorized design choice. Move unsupported claims into open questions before publishing the contract.
+5. Build a brief claim-to-basis sketch: each guarantee and caller obligation has an established requirement, contract evidence, or explicitly selected authorized design choice. Match the strength of that basis: observation is not exclusivity, and an available operation does not assign policy ownership. Keep unsupported claims as open questions. Use this working sketch to write a caller-facing contract, not implementation narration; the sketch is design evidence, not metadata copied into API documentation.
 6. Treat difficulty explaining the contract as a design warning: distinguish avoidable implementation leakage from inherent constraints. Hide mechanics callers need not know; keep relevant policy with its evidenced owner. A split or new wrapper must reduce total burden, not merely shorten the description. Use `codebase-design` for that analysis and `architect` for consequential choices.
 7. Revise the contract and implementation together as coding and testing reveal better semantics, within the authorized task. Comments-first is an iterative design probe, not a frozen upfront specification.
 
