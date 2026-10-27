@@ -47,11 +47,17 @@ and apply the full `SKILL.md` of each installed skill whose description matches 
 General-purpose expertise belongs to the separately owned Skills collection; discover installed skills
 through the host rather than treating that ownership name as a filesystem path.
 
-For browser-facing frontend work, route ownership, validation and schema trust boundaries, and file
-organization to `frontend`. For React work, route component composition, hooks, state, and providers
-to `react`. Route native/mobile work to its matching platform skills and actual framework mechanics
-to the installed matching framework skill, such as `nextjs-app-architecture` only for Next.js App Router work. Load matching library skills only when their precise branch applies,
-and leave these skills unloaded for unrelated tasks.
+General skills own workflow, architecture, test scope, review process, and evidence. Route
+language-wide TypeScript modeling, narrowing, generics, assertions, and runtime type evidence to
+`typescript`. For browser-facing frontend work, route ownership, validation and schema trust
+boundaries, and file organization to `frontend`. For React work, route component composition,
+hooks, state, and providers to `react`. Route native/mobile work to its matching platform skills and
+actual framework mechanics to the installed matching framework skill, such as
+`nextjs-app-architecture` only for Next.js App Router work.
+
+Matching library specialists own installed-version and versioned library facts. Load one only when
+its precise branch applies, and leave it unloaded when no installed skill matches the dependency or
+the task does not depend on library-specific behavior.
 
 ## Requirements handoff
 
