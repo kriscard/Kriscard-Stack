@@ -35,6 +35,8 @@ The tempting default is to implement first and add comments that narrate the mec
 6. Treat difficulty explaining the contract as a design warning: distinguish avoidable implementation leakage from inherent constraints. Hide mechanics callers need not know; keep relevant policy with its rightful caller or specialized owner. A split or new wrapper must reduce total burden, not merely shorten the description. Use `codebase-design` for that analysis and `architect` for consequential choices.
 7. Revise the contract and implementation together as coding and testing reveal better semantics, within the authorized task. Comments-first is an iterative design probe, not a frozen upfront specification.
 
+Separate established requirements and settled design choices from proposals and unresolved questions. A new interface may deliberately choose guarantees within the task's authority; an existing contract needs evidence before claiming those guarantees already hold. Label tentative semantics as proposals, resolve caller-essential unknowns before treating the contract as final, and never invent ordering, atomicity, cancellation, or lifecycle promises to fill gaps. A polished comment is not evidence that a promise exists.
+
 A signature describes names and static input/output shapes; it may leave informal guarantees unstated. A type sketch, test name, or chat note can start the probe, but is insufficient when it omits non-obvious behavior. For long-lived interfaces, write or retain a concise canonical description near the declaration or in the existing authoritative schema/API documentation. Reference that source instead of duplicating it. Future callers must be able to find the contract without reconstructing the body or the conversation.
 
 Preserve essential ordering, errors, security, concurrency, and lifecycle constraints even when their explanation is necessarily complex. Improve the design where evidence supports it; never hide required knowledge to make the interface look simple.
@@ -99,6 +101,12 @@ The editor owns autosave timing and conflict-resolution policy; the document ser
 **Input:** A generated client exactly reflects an authoritative schema, but a proposed handwritten facade adds retries, batching, partial-result behavior, and cross-module lifecycle rules.
 
 **Expected:** Keep generated methods tied to their authoritative schema without restating each one. Preserve the facade's additional guarantees and failures at its handwritten interface. Use `architect` for consequential lifecycle or compatibility choices; preserve necessary complexity rather than erasing promises.
+
+### Boundary — unresolved promises
+
+**Input:** A new event sink guarantees memory-copy completion for `write` and persistence completion for `flush`. Ordering, cancellation, and post-flush writes have not been decided.
+
+**Expected:** Preserve the two established guarantees in the draft contract. Identify the other semantics as unresolved proposals, settle necessary choices within authority, and only then finalize the caller contract. Do not manufacture FIFO ordering, rollback, or closed-after-flush behavior as though requirements already promised them.
 
 ### Authority boundary — redesign outside the approved task
 
