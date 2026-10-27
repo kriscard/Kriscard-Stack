@@ -1,13 +1,18 @@
 # @kriscard/kstack
 
-Thin native Pi launcher with Kriscard mode enabled, plus trusted Kriscard skill setup.
+Interactive Pi with Kriscard Mode, backed by Pi Durable for approved delegated execution.
 
 ```bash
-npx @kriscard/kstack setup
-cd /path/to/project
 kstack
+kstack run "Fix the failing checkout test"
+kstack --continue
+kstack durable run --session /private/path/task.sqlite "<bounded task packet>"
 ```
 
-Enter an ordinary engineering request in Pi. `kriscard-mode` selects one playbook and composes the installed skills that fit the work. Pi retains ownership of its terminal UI, tools, project instructions, sessions, and resume behavior.
+Kriscard Mode selects a playbook and applicable installed skills in Pi's normal interface.
+The orchestration skill invokes the explicit Durable backend when needed. Native Pi owns the main
+conversation; Durable owns delegated execution and its separate SQLite recovery. `kstack pi` is
+an alias for the native frontend.
 
-See the [Kriscard Stack repository](https://github.com/kriscard/Kriscard-Stack) for installation behavior, native Pi options, security boundaries, and development instructions.
+See the [repository README](../../README.md) for building from source, setup, controls, verification
+and the trusted-local-runtime boundary. The package is not yet assumed to be published.

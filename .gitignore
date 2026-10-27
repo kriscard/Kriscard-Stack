@@ -2,5 +2,6 @@ node_modules/
 dist/
 coverage/
 .test-dist/
+.kstack/
 .DS_Store
 *.log

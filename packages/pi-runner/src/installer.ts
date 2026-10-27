@@ -34,18 +34,12 @@ export type SetupPlan = {
     candidateSource: string;
     installedSource: string;
   }>;
-  herdrAvailable: boolean;
   commands: Array<{ command: string; args: string[] }>;
 };
-
-const sourceAliases = new Map([
-  ["herdrdev/herdr", new Set(["herdrdev/herdr", "ogulcancelik/herdr"])],
-]);
 
 const skillSelections = [
   { source: "kriscard/Skills", skill: "*" },
   { source: "kriscard/Kriscard-Stack", skill: "*" },
-  { source: "herdrdev/herdr", skill: "herdr" },
 ] as const;
 
 export const runCommand: CommandRunner = (command, args, options = {}) =>
@@ -172,7 +166,7 @@ async function readInstalledSkills(runner: CommandRunner): Promise<InstalledSkil
 }
 
 function sameSource(candidate: string, installed: string): boolean {
-  return candidate === installed || Boolean(sourceAliases.get(candidate)?.has(installed));
+  return candidate === installed;
 }
 
 function installationCommands(): Array<{ command: string; args: string[] }> {
@@ -237,19 +231,9 @@ export async function createSetupPlan(runner: CommandRunner = runCommand): Promi
     ];
   });
 
-  const herdrAvailable =
-    (
-      await runner("herdr", ["--help"]).catch(() => ({
-        code: 1,
-        stdout: "",
-        stderr: "",
-      }))
-    ).code === 0;
-
   return {
     candidates,
     conflicts,
-    herdrAvailable,
     commands: installationCommands(),
   };
 }
@@ -283,8 +267,6 @@ ${sources}
 
 Commands after confirmation:
 ${plan.commands.map((step) => `  - ${displayCommand(step.command, step.args)}`).join("\n")}
-
-Herdr CLI: ${plan.herdrAvailable ? "available" : "not found; ordinary Kstack will work but orchestration will be unavailable"}
 
 Skills CLI may collect anonymous telemetry. Set DO_NOT_TRACK=1 or DISABLE_TELEMETRY=1 to disable it.${conflicts}
 

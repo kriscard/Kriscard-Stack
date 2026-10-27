@@ -1,153 +1,115 @@
 # Kriscard Stack
 
-Kriscard Stack is a skill-first engineering workflow for Pi.
-
-`kstack` opens native Pi with `kriscard-mode` enabled. The mode chooses one playbook, and the playbook composes installed skills. Pi owns the terminal UI, tools, project instructions, conversations, persistence, and resume behavior. Git, GitHub, project files, and user-approved notes remain the ordinary sources of truth.
-
-```text
-kstack
-  → native Pi session
-    → kriscard-mode
-      → one playbook
-        → installed skills
-          → project files, tests, Git and GitHub
-```
-
-Kstack has no custom control plane, task database, HTTP API, dashboard, artifact authority, or migration framework.
-
-## Requirements
-
-- macOS
-- Node.js 24 or newer
-- Pi installed and authenticated
-- `npx` for bootstrap and the Skills CLI
-
-Herdr is optional. Ordinary single-agent Kstack works without its CLI.
-
-## Setup
-
-After `@kriscard/kstack` is published, bootstrap it with:
-
-```bash
-npx @kriscard/kstack setup
-```
-
-Setup discovers the current skills, then previews and confirms these global changes:
-
-- install or update the `@kriscard/kstack` CLI package;
-- install all skills from `kriscard/Skills` for Pi;
-- install all skills from `kriscard/Kriscard-Stack` for Pi;
-- install only the authoritative `herdr` skill from `herdrdev/herdr` for Pi.
-
-It does not target every detected agent, remove unrelated skills, modify `AGENTS.md`, or mutate from `postinstall`. Existing skill names owned by another source block installation.
-
-The Skills CLI may collect anonymous telemetry. Disable it for setup and updates with either variable:
-
-```bash
-DO_NOT_TRACK=1 npx @kriscard/kstack setup
-# or
-DISABLE_TELEMETRY=1 npx @kriscard/kstack setup
-```
-
-Use `--yes` only after reviewing the same preview interactively:
-
-```bash
-npx @kriscard/kstack setup --yes
-```
-
-Update the CLI and rediscover every current skill from the trusted sources with:
-
-```bash
-kstack update
-```
-
-## Run
-
-Open native Pi with Kriscard mode enabled:
-
-```bash
-kstack
-```
-
-Then enter an ordinary engineering request:
+Kriscard Stack opens interactive Pi with your engineering skills, principles and playbooks.
+Pi Durable is the execution backend used by the orchestration workflow, not the frontend.
 
 ```text
-Build a feature that adds CSV export to the reports page.
+kstack → interactive Pi → Kriscard Mode → playbook → relevant skills
+                           ↓ when delegated execution is needed
+                    kstack-orchestrator → Pi Durable backend → results
 ```
 
-Kstack passes native Pi options through, so Pi's session workflow remains available:
+## Run from this checkout
+
+Requires Node.js 24+, pnpm, macOS or Linux, and Pi installed and configured (`pi` on PATH).
+
+```bash
+pnpm install
+pnpm run build
+pnpm run kstack
+```
+
+This opens Pi's normal interface, editor, tools, extensions and session controls. Kriscard Mode
+selects the playbook and loads applicable principles and skills. Ordinary tasks stay in that Pi
+conversation; they do not open a Durable Harness.
+
+To work in another repository, change to that repository and run the built launcher:
+
+```bash
+node /path/to/Kriscard-Stack/packages/pi-runner/dist/bin.js
+```
+
+## Native Pi sessions
+
+Pi owns the main conversation and its JSONL session. Native flags pass through unchanged:
 
 ```bash
 kstack --continue
 kstack --resume
-kstack --name "CSV export"
-kstack --session-id csv-export
-```
-
-Submit one non-interactive request with Pi's print mode:
-
-```bash
 kstack run "Fix the failing checkout test"
 ```
 
-`kriscard` remains an alias for `kstack`.
+The existing Pi configuration supplies models and credentials. `KRISCARD_MODEL=provider:model-id`
+remains an explicit override. Kstack has no separate login or credential store. `kstack pi` is an
+alias for the same native frontend.
 
-Pi selects its configured default model. `KRISCARD_MODEL=<provider>:<model-id>` remains available as an explicit launcher override.
+## Pi Durable execution backend
 
-## Sessions
-
-Pi owns session storage, naming, resume, branching, compaction, and deletion. Inside Pi, use `/new`, `/resume`, `/name`, `/session`, `/tree`, `/fork`, and `/compact`. From the shell, use native options such as `--continue`, `--resume`, `--session`, `--session-id`, and `--name` through `kstack`.
-
-Legacy Kstack SQLite session files are not migrated or deleted automatically.
-
-## Repository instructions
-
-Before repository work, Kstack agents read the root `AGENTS.md` when present. Before changing a nested area, they check for a closer `AGENTS.md`. The closest applicable file wins, while the explicit user request remains higher priority.
-
-Kstack consumes these files from the active checkout. Setup and session management never create or modify them.
-
-## Orchestration
-
-Single-agent execution remains the default. `kriscard-mode` selects `kstack-orchestrator` only for explicitly requested or genuinely independent outcomes.
-
-The orchestrator:
-
-- proposes the worker goals and topology before consequential fan-out;
-- normally starts no more than two implementation workers;
-- loads the authoritative installed `herdr` skill and discovers the live CLI contract;
-- gives each worker a fresh named Pi session and one bounded task packet;
-- allows read-only workers to share a checkout;
-- requires distinct Herdr-managed worktrees and branches for parallel writers;
-- waits, reads, steers, and stops workers through Herdr rather than model polling;
-- preserves a crashed worker's durable session and worktree without automatically restarting it;
-- summarizes bounded result packets rather than copying worker transcripts;
-- uses a fresh verifier tied to the exact commit or diff before claiming combined mutating work is ready.
-
-Kstack does not copy the Herdr skill or add a task database, process supervisor, scheduler, runtime adapter, or automatic merge path. Integration, merge, release, branch deletion, and worktree cleanup remain explicit user decisions.
-
-## Rollback
-
-Package and skill installation remain owned by their existing tools:
+For approved delegation, `kstack-orchestrator` invokes the explicit backend. The launcher advertises
+its absolute command to Pi, so this does not require a global Kstack installation.
 
 ```bash
-npm uninstall --global @kriscard/kstack
-npx skills remove kriscard/Skills
-npx skills remove kriscard/Kriscard-Stack
-npx skills remove herdrdev/herdr
+kstack durable run --session /private/path/task.sqlite "<bounded task packet>"
+kstack durable --session /private/path/task.sqlite  # resume pending work, without submitting it again
 ```
 
-Review removal prompts before confirming. Pi sessions, legacy Kstack SQLite files, and Git worktrees are retained.
+The command returns the execution's results when it finishes. This is a foreground command handoff,
+not a background notification bridge or a worker panel inside Pi's interface. Inside the backend,
+the SDK `subagent` tool supplies persistent workers and result delivery.
+
+Backend storage defaults to `.kstack/session.sqlite`, separate from native Pi's session. Keep
+`.kstack/` out of Git; it contains private execution state. Only explicit backend invocation opens it.
+
+The optional backend diagnostic terminal has its own controls (these are not native Pi commands):
+
+- `:quit` closes the Harness, retaining pending work for the next reopen.
+- Ctrl+C aborts the main turn; background workers continue.
+- `:stop` aborts current main and background work, retaining conversations.
+- `:compact` requests SDK compaction.
+- EOF waits for current main and background work, then closes the session.
+
+`kstack durable run` waits for backend worker results before exiting. Use one owner process per
+SQLite file. Interrupted unsafe tools follow SDK recovery semantics: inspect their effects before
+retrying. Closing native Pi does not convert its JSONL history into a Durable session.
+
+## Your workflow
+
+- [Kriscard Mode](skills/dev/kriscard-mode/SKILL.md) selects one of the existing playbooks.
+- Principles are indexed in the mode and loaded when their triggers apply.
+- General-purpose skills remain owned by `kriscard/Skills` and are discovered through Pi's resource loader.
+- [Kstack Orchestrator](skills/dev/kstack-orchestrator/SKILL.md) coordinates from interactive Pi,
+  invokes the Durable backend for approved execution, and checks the returned evidence.
+  Git branches and worktrees remain ordinary Git resources.
+- Project verification uses the project's existing commands and skills. A worker's success message
+  is not proof that the behavior works.
+
+Adding skills or playbooks does not require changing TypeScript. Workers read their own checkout's
+instructions. This is a trusted local coding runtime, not a sandbox; its tools can read, write and
+execute commands with your user permissions. Publishing, merging and destructive cleanup retain
+explicit user approval gates.
+
+## Setup
+
+Native histories and older Kstack databases are not converted or deleted automatically. The Durable
+backend is not a native-extension compatibility layer. `kriscard` remains an alias for `kstack`.
+
+Once the package is published, `kstack setup` and `kstack update` preview global CLI installation
+and skill installation from `kriscard/Skills` and `kriscard/Kriscard-Stack`. They require confirmation
+unless `--yes` is supplied, preserve unrelated skills and block conflicting skill ownership.
+Herdr is not required. No global installation or settings change occurs during an ordinary run.
 
 ## Development
 
 ```bash
-pnpm install
 pnpm run check
-pnpm run kstack -- --help
+pnpm exec oxlint --deny-warnings --format=agent
 ```
 
-Repository layout:
+`check` runs lint, build, typechecking and formatting checks. There is no automated test suite;
+these checks do not verify runtime behavior.
 
-- `skills/dev/kriscard-mode/` — workflow router and playbooks
-- `skills/dev/principle-*/` — optional engineering principles
-- `packages/pi-runner/` — publishable Kstack CLI and native Pi launcher
+The runtime follows Pi Durable's [coding agent](https://github.com/earendil-works/pi/blob/main/packages/durable/test/examples/25-coding-agent.ts),
+[background subagents](https://github.com/earendil-works/pi/blob/main/packages/durable/test/examples/22-subagent-background.ts)
+and [recovery](https://github.com/earendil-works/pi/blob/main/packages/durable/test/examples/12-recovery.ts)
+examples. The experimental SDK is version-pinned; adapt to its installed public API rather than
+adding a parallel scheduler, workflow database or provider framework.

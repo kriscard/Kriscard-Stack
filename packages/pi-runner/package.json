@@ -1,7 +1,7 @@
 {
   "name": "@kriscard/kstack",
   "version": "0.1.0",
-  "description": "Native Pi launcher for Kriscard engineering workflows.",
+  "description": "Interactive Pi workflows with a Pi Durable execution backend.",
   "bin": {
     "kriscard": "dist/bin.js",
     "kstack": "dist/bin.js"
@@ -20,22 +20,25 @@
     "access": "public"
   },
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"require('node:fs').cpSync('../../skills/dev/kriscard-mode','dist/skills/kriscard-mode',{recursive:true})\"",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"require('node:fs').cpSync('../../skills/dev','dist/skills',{recursive:true})\"",
     "start": "node --enable-source-maps dist/bin.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@earendil-works/chord": "1.4.0",
     "@earendil-works/pi-ai": "1.4.0",
     "@earendil-works/pi-coding-agent": "1.4.0",
-    "@earendil-works/pi-durable": "1.4.0"
+    "@earendil-works/pi-durable": "1.4.0",
+    "fs-ext": "2.1.1"
   },
   "devDependencies": {
     "@types/fs-ext": "2.0.3",
     "@types/node": "24.10.0",
     "typescript": "7.0.2"
   },
-  "optionalDependencies": {
-    "fs-ext": "2.1.1"
+  "pi": {
+    "skills": [
+      "dist/skills"
+    ]
   }
 }

@@ -1,15 +1,15 @@
 # CLAUDE.md
 
-Kriscard Stack is a skill-first engineering workflow with one small native Pi launcher.
+Kriscard Stack opens interactive Pi with a skill-first workflow and an explicit Pi Durable execution backend.
 
 ## Boundaries
 
 - `kriscard-mode` routes a request to one playbook.
-- `kstack-orchestrator` coordinates approved independent workers through the authoritative installed Herdr skill; it does not own Herdr commands or process supervision.
+- `kstack-orchestrator` coordinates from the interactive Pi conversation and invokes the explicit Durable backend for approved execution. Inside that backend, Pi Durable owns worker conversations, scheduling, reporting and recovery.
 - Playbooks compose general-purpose skills from `kriscard/Skills`; never copy them here.
-- `packages/pi-runner` owns the thin `kstack` launcher and previewed installation commands; Pi owns its UI, tools, conversations, and session lifecycle.
+- `packages/pi-runner` launches native Pi by default. Only its explicit `durable` command opens a Harness. Keep workflow policy in skills, not TypeScript. Native JSONL sessions and Durable SQLite state remain separate.
 - Git, GitHub, project files, and user-approved notes remain the workflow's ordinary sources of truth.
-- Add runtime infrastructure only after a demonstrated workflow failure requires it.
+- Follow Pi Durable's coding-agent, background-subagent and recovery examples. Report a demonstrated SDK limitation before proposing extra infrastructure; do not pre-empt hypothetical gaps.
 
 ## Commands
 
@@ -17,5 +17,5 @@ Kriscard Stack is a skill-first engineering workflow with one small native Pi la
 pnpm install
 pnpm run check
 pnpm run kstack -- --help
-pnpm run kstack -- run "<request>"
+pnpm run kstack run "<request>"
 ```

@@ -27,12 +27,25 @@ to choosing the playbook; resolve consequential requirements and design question
 `grilling` when the user requests a stress test. State the selected playbook, then read it. Each
 worker selects one playbook for its own outcome; the parent keeps its coordinating playbook.
 
+## Principles
+
+Read this index at task start. Load the full principle only when current evidence matches its trigger:
+
+| When                                                   | Principle                                                                        |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| Work crosses an ownership or responsibility boundary   | [Boundary discipline](../principle-boundary-discipline/SKILL.md)                 |
+| Preparing or changing PR grouping                      | [One goal per PR](../principle-one-goal-per-pull-request/SKILL.md)               |
+| Verification depends on a particular revision          | [Evidence follows the commit](../principle-evidence-follows-the-commit/SKILL.md) |
+| A handoff contains broad history or unrelated material | [Minimize context](../principle-minimize-context/SKILL.md)                       |
+| Acceptance requires behavior on a real surface         | [Prove real behavior](../principle-prove-real-behavior/SKILL.md)                 |
+| Implementation departs from an approved plan           | [Stop on plan drift](../principle-stop-on-plan-drift/SKILL.md)                   |
+
 ## Compose skills
 
-A playbook names the job to perform, not every implementation rule. Load only the installed skills
-whose descriptions match the current step and technology. General-purpose expertise belongs to the
-separately owned Skills collection; discover installed skills through the host rather than treating
-that ownership name as a filesystem path.
+A playbook names the job to perform, not every implementation rule. Before performing a step, read
+and apply the full `SKILL.md` of each installed skill whose description matches its work and technology.
+General-purpose expertise belongs to the separately owned Skills collection; discover installed skills
+through the host rather than treating that ownership name as a filesystem path.
 
 For browser-facing frontend work, route ownership, validation and schema trust boundaries, and file
 organization to `frontend`. For React work, route component composition, hooks, state, and providers
@@ -44,7 +57,8 @@ and leave these skills unloaded for unrelated tasks.
 
 When a playbook needs consequential requirements or design planning, inspect the installed `spec`
 skill's invocation policy. If it is user-only, explain the blocking decision, ask the user to invoke
-`/spec` with the bounded brief, and stop implementation until the approved artifacts are supplied.
+`spec` with the bounded brief using the host's skill command (`/skill:spec` in Pi), and stop
+implementation until the approved artifacts are supplied.
 If model-invocable, use the host's skill mechanism and honor its approval-and-stop boundary. If it is
 unavailable, ask whether to resolve the decision in chat or wait for the skill; do not fabricate an
 invocation or approved plan. Small, clear changes may proceed directly.
@@ -53,10 +67,15 @@ Preserve explicit user gates for destructive actions, publishing, deployment, an
 
 ## Durable execution
 
-Pi owns the conversation, tool work, persistence, resume, branching, and compaction. Continue from
-that session state. Do not create another control plane, workflow database, artifact store, API, or
-migration system. Native saved Pi sessions are not the separate experimental Pi Durable SDK;
-a request to adopt that runtime needs its own approved design and implementation scope.
+Kstack opens interactive Pi. Pi owns the interface, main conversation, tools and native JSONL
+session. Keep ordinary work in that conversation. This skill and its playbooks own the workflow.
+
+For approved delegated execution, the Orchestration playbook uses `kstack-orchestrator` to invoke
+the explicit Pi Durable backend. The launcher advertises its exact command. Durable owns that
+execution's conversations, tools, background workers and recovery—not the interactive frontend.
+Native sessions and Durable SQLite files are separate and are not automatically converted.
+Reopen the same backend storage to resume pending SDK work; inspect interrupted unsafe effects
+before retrying them. Use only the capabilities actually supplied by the current host.
 
 Git, GitHub, project files, tests, and user-approved notes remain the ordinary sources of truth.
 

@@ -4,8 +4,14 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 
+const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+
+const localModePath = resolve(moduleDirectory, "../../../skills/dev/kriscard-mode");
+
+const bundledModePath = resolve(moduleDirectory, "skills/kriscard-mode");
+
 export const KRISCARD_MODE_DIRECTIVE =
-  "Kriscard mode is enabled. Before handling each user request, read and follow the kriscard-mode skill, select exactly one matching playbook, state the selected playbook, and then follow it.";
+  "Kriscard mode is enabled. Before handling user requests, read and follow the kriscard-mode skill.";
 
 type BuildPiArgumentsOptions = {
   arguments: readonly string[];
@@ -31,16 +37,12 @@ function piAgentDirectory(): string {
 }
 
 export function resolveKriscardModePath(): string {
-  const moduleDirectory = dirname(fileURLToPath(import.meta.url));
-  const localModePath = resolve(moduleDirectory, "../../../skills/dev/kriscard-mode");
-  const bundledModePath = resolve(moduleDirectory, "skills/kriscard-mode");
-
   const candidates = [
     process.env.KSTACK_MODE_PATH,
     localModePath,
+    bundledModePath,
     join(homedir(), ".agents", "skills", "kriscard-mode"),
     join(piAgentDirectory(), "skills", "kriscard-mode"),
-    bundledModePath,
   ];
 
   for (const candidate of candidates) {
@@ -60,12 +62,43 @@ export function parseConfiguredModel(value: string): string[] {
   return ["--provider", value.slice(0, separator), "--model", value.slice(separator + 1)];
 }
 
+export function resolveKriscardSkillPackage(modePath: string): string | undefined {
+  if (modePath === localModePath) return resolve(moduleDirectory, "../../..");
+
+  if (modePath === bundledModePath) return resolve(moduleDirectory, "..");
+
+  return undefined;
+}
+
 export function buildPiArguments(options: BuildPiArgumentsOptions): string[] {
+  const durableCommand = [
+    process.execPath,
+    join(dirname(fileURLToPath(import.meta.url)), "bin.js"),
+    "durable",
+  ]
+    .map((argument) => JSON.stringify(argument))
+    .join(" ");
+
+  const modeDirectory = expandHome(options.modePath);
+
+  const instructions = `${KRISCARD_MODE_DIRECTIVE}
+Kriscard Mode directory: ${modeDirectory} (base for its relative links).
+You are in the interactive Pi frontend.
+Pi Durable backend command: ${durableCommand}`;
+
+  const skillPackage = resolveKriscardSkillPackage(options.modePath);
+
+  // Pi loads explicit package skills before automatically discovered skills.
+  const skillArguments = skillPackage
+    ? ["--extension", skillPackage]
+    : ["--skill", options.modePath];
+
   const arguments_ = [
-    "--skill",
-    options.modePath,
+    ...skillArguments,
     "--append-system-prompt",
-    KRISCARD_MODE_DIRECTIVE,
+    instructions,
+    "--append-system-prompt",
+    join(modeDirectory, "SKILL.md"),
   ];
 
   if (options.model) arguments_.push(...parseConfiguredModel(options.model));

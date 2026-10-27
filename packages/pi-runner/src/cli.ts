@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
 
+import type { DurableOptions } from "./durable/terminal.js";
 import {
   applySetupPlan,
   createSetupPlan,
@@ -18,6 +19,7 @@ import {
 export type CliCommand =
   | { type: "help" }
   | { type: "pi"; arguments: string[]; print: boolean }
+  | { type: "durable"; sessionPath: string; model?: string; prompt?: string; print: boolean }
   | { type: "setup" | "update"; yes: boolean };
 
 export type CliDependencies = {
@@ -29,18 +31,22 @@ export type CliDependencies = {
   error: Writable;
   commandRunner: CommandRunner;
   runPi: PiRunner;
+  runDurable?: (options: DurableOptions) => Promise<number>;
 };
 
 const help = `Usage:
-  kstack [pi options] [initial prompt]
-  kstack run [pi options] "<request>"
+  kstack [native Pi options] ["<request>"]
+  kstack run [native Pi options] "<request>"
+  kstack durable run [--session <sqlite-file>] [--model <provider/model>] "<task packet>"
+  kstack durable [--session <sqlite-file>] [--model <provider/model>]
   kstack setup [--yes]
   kstack update [--yes]
 
-Bare kstack opens native Pi with kriscard-mode enabled. Pi owns its UI, tools,
-project instructions, sessions, and resume behavior. Use Pi options such as
---continue, --resume, --session, --session-id, --name, and --model normally.
-The run command adds --print for a one-shot request.`;
+Kstack opens interactive Pi with Kriscard Mode. Pi owns the UI and main session;
+skills and playbooks own the workflow. Native Pi options pass through unchanged.
+The run command uses native Pi print mode. kstack pi remains an explicit alias.
+The orchestration skill uses the explicit durable backend for approved execution.
+Durable SQLite state is separate from native Pi's JSONL sessions.`;
 
 function yesOption(args: string[]): boolean {
   const index = args.indexOf("--yes");
@@ -55,6 +61,8 @@ function yesOption(args: string[]): boolean {
 export function parseCommand(argv: readonly string[]): CliCommand {
   const args = [...argv];
 
+  if (args[0] === "pi") return { type: "pi", arguments: args.slice(1), print: false };
+
   if (args.includes("--help") || args.includes("-h")) return { type: "help" };
 
   const command = args[0];
@@ -68,15 +76,47 @@ export function parseCommand(argv: readonly string[]): CliCommand {
     return { type: command, yes };
   }
 
-  if (command === "run") {
-    args.shift();
+  if (command !== "durable") {
+    const print = command === "run";
 
-    if (!args.length) throw new Error("run requires a request");
+    if (print) args.shift();
 
-    return { type: "pi", arguments: args, print: true };
+    if (print && !args.length) throw new Error("run requires a request");
+
+    return { type: "pi", arguments: args, print };
   }
 
-  return { type: "pi", arguments: args, print: false };
+  args.shift();
+  const print = args[0] === "run";
+
+  if (print) args.shift();
+  let sessionPath = ".kstack/session.sqlite";
+  let model: string | undefined;
+  const prompt: string[] = [];
+
+  for (let index = 0; index < args.length; index++) {
+    const value = args[index];
+
+    if (value === "--session" || value === "--model") {
+      const argument = args[++index];
+
+      if (!argument || argument.startsWith("--")) throw new Error(`${value} requires a value`);
+
+      if (value === "--session") sessionPath = argument;
+      else model = argument;
+    } else if (value === "--") {
+      prompt.push(...args.slice(index + 1));
+      break;
+    } else if (value.startsWith("-")) {
+      throw new Error(`Unknown Kstack option: ${value}. Use kstack pi for native Pi options.`);
+    } else {
+      prompt.push(value);
+    }
+  }
+
+  if (print && !prompt.length) throw new Error("run requires a request");
+
+  return { type: "durable", sessionPath, model, prompt: prompt.join(" ") || undefined, print };
 }
 
 async function confirm(question: string, dependencies: CliDependencies): Promise<boolean> {
@@ -100,13 +140,14 @@ export async function main(
 ): Promise<number> {
   const resolved: CliDependencies = {
     cwd: dependencies.cwd ?? process.cwd(),
-    model: dependencies.model ?? process.env.KRISCARD_MODEL,
+    model: dependencies.model ?? (process.env.KRISCARD_MODEL || undefined),
     modePath: dependencies.modePath,
     input: dependencies.input ?? process.stdin,
     output: dependencies.output ?? process.stdout,
     error: dependencies.error ?? process.stderr,
     commandRunner: dependencies.commandRunner ?? runCommand,
     runPi: dependencies.runPi ?? runNativePi,
+    runDurable: dependencies.runDurable,
   };
 
   try {
@@ -128,7 +169,23 @@ export async function main(
         print: command.print,
       });
 
-      return resolved.runPi(arguments_, resolved.cwd);
+      return await resolved.runPi(arguments_, resolved.cwd);
+    }
+
+    if (command.type === "durable") {
+      const runDurable = resolved.runDurable ?? (await import("./durable/terminal.js")).runDurable;
+
+      return await runDurable({
+        cwd: resolved.cwd,
+        sessionPath: command.sessionPath,
+        model: command.model ?? resolved.model?.replace(":", "/"),
+        modePath: resolved.modePath,
+        prompt: command.prompt,
+        print: command.print,
+        input: resolved.input,
+        output: resolved.output,
+        error: resolved.error,
+      });
     }
 
     const plan = await createSetupPlan(resolved.commandRunner);
