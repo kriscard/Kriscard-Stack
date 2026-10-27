@@ -1,75 +1,83 @@
 ---
 name: principle-invest-in-design
 description: >-
-  Invest bounded design effort when a working feature or fix would introduce or
-  preserve demonstrated duplication, dependency, obscurity, or an awkward
-  interface in the affected code. Use only when the structural consequence is
-  evidenced by the current task; stop rather than expanding into an unapproved
-  redesign.
+  Decide how much design effort an approved feature or fix warrants while it is
+  being delivered. Use when the immediate patch raises a concrete question about
+  contracts, state, dependencies, ownership, or structural friction in the
+  affected responsibility; this principle does not grant authority to restructure.
 ---
 
 # Invest in Design
 
-Leave the affected design as though the requirement had been anticipated, instead of making the smallest working patch the permanent structure.
-
-## Activation evidence
-
-Apply this principle during a feature or fix when the current code and proposed implementation demonstrate that a merely working patch would introduce or preserve at least one of these consequences in the affected path:
-
-- the same decision, policy, or coordination would exist in more than one place;
-- a new dependency would point in the wrong direction, leak implementation knowledge, or make unrelated code change together;
-- the requirement would remain hidden behind unclear ownership, names, control flow, or state;
-- callers would inherit an awkward interface, repeated setup, invalid intermediate state, or knowledge the implementation should own.
-
-Require concrete evidence from the changed path, its callers, tests, or the proposed diff. A preference for a cleaner architecture, possible future reuse, or nearby pre-existing debt is not activation evidence.
+Treat design as part of ordinary delivery. Consider how the requirement should fit the affected responsibility before committing to the first working patch, then make only the bounded improvement justified by the current requirement, callers, constraints, and task authority.
 
 ## Decision rule
 
-> When the smallest working patch would create or preserve demonstrated structural friction in the affected path, spend bounded effort within the approved task to remove the cause and make the design fit the requirement; stop before unrelated or unapproved redesign.
+> During a feature or fix, invest enough design effort to reduce the demonstrated understanding and change burden in the affected responsibility while preserving required behavior and staying inside the approved task. A clean local patch may already satisfy the rule.
+
+Design consideration does not wait for existing duplication or a completed bad patch. Structural edits do require current evidence and authority: the requirement, affected callers, constraints, or proposed implementation must show why the change improves today's design. A preference for cleaner architecture, nearby legacy debt, or possible future functionality is insufficient.
 
 ## Apply the rule
 
-1. State the required behavior and the exact duplication, dependency, obscurity, or interface burden the smallest patch would leave behind.
-2. Describe the smallest design that would make the requirement look anticipated. Bound it to the affected responsibility, direct callers, required tests, and approved paths and contracts.
-3. Implement the behavior and that bounded design together. Prefer moving one decision to its owner, restoring one dependency direction, clarifying one responsibility, or giving callers one coherent interface over adding a compensating branch or duplicate path.
-4. Verify both outcomes: the feature or fix works, and the named structural friction is absent from the resulting diff and affected callers.
-5. Report the changed implementation decision and its evidence as `Applied principle-invest-in-design: <friction evidence> changed <smallest patch> to <bounded design investment>.`
+1. **Frame today's responsibility.** State the required behavior, the code that owns it, the direct callers, and the guarantees that must remain stable, including relevant ordering, failure, lifecycle, and performance obligations.
+2. **Consider the coherent fit.** Compare the clean local patch with the smallest design improvement that helps the current use. The investment may clarify a contract, documentation, name, state model, dependency direction, or responsibility; it need not create an abstraction.
+3. **Establish evidence and authority.** Trace any structural edit to the current requirement, callers, constraints, tests, or proposed diff. Keep it within approved paths, contracts, dependencies, ownership, and pull-request grouping. Better design is not scope authority.
+4. **Make one bounded improvement.** Change only the affected responsibility and direct integration needed for the behavior. A somewhat-general interface on first use is justified when it makes today's implementation or callers simpler; predicted adapters, registries, hooks, configuration, or other future functionality are not.
+5. **Verify behavior and total burden.** Recheck the observable feature or fix, then compare caller-plus-implementation knowledge and change cost before and after. Include guarantees, sequencing, failures, recovery, and relevant performance constraints. One central owner, fewer branches, or fewer duplicate lines is not proof by itself.
+6. **State the honest result.** Identify the demonstrated burden reduced or eliminated, the responsibility changed, and any residual limitation or legacy debt. Do not claim complete cleanup when the improvement is partial, and do not introduce avoidable new debt merely because older debt remains.
 
 ## Neighboring owners
 
-- `refactor` owns an explicitly requested behavior-preserving structural job, including its preservation workflow. This principle instead changes how an approved feature or fix is implemented; structural edits remain supporting work for that behavior.
-- `codebase-design` owns deeper analysis of module interfaces, seams, locality, and caller burden. Load it when choosing or evaluating such a design; this principle supplies the decision to invest, not a replacement design method.
-- `karpathy-guidelines` keeps changes surgical and rejects speculative abstraction. Design investment still must trace directly to the requested behavior and demonstrated friction; “bounded” does not authorize adjacent cleanup.
-- `principle-stop-on-plan-drift` owns the stop decision when the needed design changes approved paths, behavior, dependencies, prerequisites, or pull-request grouping. This principle never converts a better design into scope authority.
+- Use `principle-build-the-abstraction` when the material choice is the shape of a new or materially extended mechanism, including its first use. It chooses the capability-shaped increment; this principle decides whether and how much design investment belongs in the delivery.
+- Load `codebase-design` for detailed interface, depth, locality, seam, and caller-burden analysis. This principle does not duplicate that method.
+- Use `refactor` when behavior-preserving structural improvement is itself the requested job. Here, structural work only supports an approved feature or fix.
+- Route consequential or hard-to-reverse boundary choices to `architect`.
+- Follow `karpathy-guidelines` for surgical execution and `principle-stop-on-plan-drift` when the sound improvement would exceed approved authority.
 
-## Limits and counterexamples
+## Limits
 
-- A truly local patch with one clear owner, no repeated policy, a sound dependency direction, and a fitting interface does not activate the principle. Ship the clean patch.
-- Do not redesign a subsystem because the task revealed that a broader architecture could be better. Improve only the portion necessary to prevent the demonstrated consequence in the affected path.
-- Do not create an abstraction for hypothetical reuse or trade straightforward code for indirection. The design investment must remove present evidence, not forecast possible needs.
-- A tactical mitigation is acceptable for a real emergency, a disposable experiment, or explicitly accepted short-lived debt. Record the consequence, owner or expiry condition, and why the full design investment is deferred.
-- If the sound design requires an unapproved contract, dependency, owner, path, or pull-request change, apply `principle-stop-on-plan-drift`; preserve the current state and return to planning rather than silently expanding scope.
+- A clean local patch with a fitting owner, contract, state model, and dependency direction needs no abstraction, subsystem redesign, or ritual design report.
+- Somewhat-general means a coherent interface for current functionality, not hypothetical future functionality. It may be worthwhile before reuse when it reduces today's total burden.
+- Improve design incrementally. A bounded reduction is valid when behavior is preserved and residual limitations are explicit; compare the responsibility actually changed and stop when further work leaves the approved task.
+- A tactical mitigation is acceptable for a real emergency, a disposable experiment, or explicitly accepted short-lived debt. Record the consequence, why it is deferred, the affected scope, and the owner or expiry condition for follow-up.
+- If the improvement requires an unapproved contract, dependency, owner, path, behavior, or pull-request change, apply `principle-stop-on-plan-drift` before making it.
 
 ## Observable decision
 
-Without this principle, the worker chooses the smallest patch that passes behavior checks and leaves the structural consequence for later. With it, the worker replaces that patch with a bounded implementation that passes the same behavior checks and removes the evidenced duplication, dependency problem, obscurity, or caller burden. When the bounded improvement cannot stay inside the approved task, the observable decision is to stop rather than redesign broadly.
+Without this principle, a worker may either ship the first passing patch without considering its fit or overreact with speculative cleanup. With it, the worker chooses a proportionate, evidence-backed improvement inside the authorized responsibility, verifies behavior and total burden, and reports residual debt honestly. The valid outcome may still be the clean local patch.
 
 ## Evaluation cases
 
-### Positive — feature would duplicate policy
+### Positive — first-use design before duplication
 
-**Input:** A feature needs the same eligibility decision already implemented in one handler. The smallest patch copies that conditional into a second handler, and both handlers serve the same owned responsibility.
+**Input:** A feature needs the first text-deletion operation in a buffer. A proposed `backspace(cursor)` method mirrors the UI event, while a range deletion operation would make the current buffer logic and contract simpler without adding predicted editor features.
 
-**Expected:** Activate the principle. Put the decision in the existing responsibility's coherent owner or interface, update the two direct callers, and verify the feature plus the absence of duplicated policy. Do not defer the second copy as generic cleanup.
+**Expected:** Consider design before a second caller or duplicate appears. Because mechanism shape is material, use `principle-build-the-abstraction` to choose the current coherent operation, keep Backspace policy in the UI, and verify today's behavior and range guarantees. Do not add registries, hooks, or future editing operations.
+
+### Positive — bounded incremental improvement
+
+**Input:** A feature touches a request path with several legacy error translations. The approved package owns one of them, and moving that translation into its existing request contract reduces caller knowledge, but other legacy paths are outside scope.
+
+**Expected:** Make and verify the owned improvement, disclose the residual legacy translations, and avoid declaring the subsystem cleaned up. Do not preserve unnecessary new duplication merely because older debt remains.
 
 ### Negative — clean local patch
 
-**Input:** A feature adds one branch to the module that already owns the decision. The branch uses existing dependencies and interfaces, adds no repeated policy, and leaves direct callers unchanged.
+**Input:** A feature adds one clear condition to the module that already owns the decision. Its contract, callers, dependencies, and state remain coherent.
 
-**Expected:** Do not activate the principle. Implement and verify the local branch without inventing an abstraction or redesign.
+**Expected:** Implement and verify the local condition. Do not introduce an abstraction, mandatory design report, or subsystem redesign.
 
-### Boundary — sound design would expand scope
+### Boundary — preserve behavior and authority
 
-**Input:** Removing an awkward interface would require changing another package's public contract and adding a new dependency not authorized by the approved task. A local mitigation can satisfy the behavior, but the broader redesign would be cleaner.
+**Input:** A deeper interface would reduce caller burden but requires changing another package's public contract. The approved task permits changes only in the current package, whose local implementation can preserve behavior without imitating the other owner's abstraction.
 
-**Expected:** Do not silently take the broader redesign. Apply `principle-stop-on-plan-drift` and return to planning for the contract and dependency decision. Proceed with the mitigation only if it qualifies as an approved emergency, disposable experiment, or explicitly accepted short-lived debt.
+**Expected:** Do not cross the contract boundary or create a local duplicate. Apply `principle-stop-on-plan-drift`, preserve the authorized work, and request an owner-spanning decision.
+
+### Exception — emergency debt
+
+**Input:** A production outage requires a contained mitigation before the sound design can be completed. The mitigation adds one temporary branch in the affected owner.
+
+**Expected:** Ship the smallest safe mitigation only when the emergency authority is explicit. Record the added consequence, affected scope, deferral reason, and follow-up owner or expiry condition; do not present the mitigation as the completed design.
+
+## Source provenance
+
+This principle adapts the continual, incremental design-investment guidance in John Ousterhout's [strategic programming notes](https://web.stanford.edu/~ouster/cgi-bin/cs190-winter18/lecture.php?topic=working), [modular design notes](https://web.stanford.edu/~ouster/cgi-bin/cs190-winter18/lecture.php?topic=modularDesign), public [second-edition extract](https://web.stanford.edu/~ouster/cgi-bin/aposd2ndEdExtract.pdf), and [2022 interview](https://se-radio.net/2022/07/episode-520-john-ousterhout-on-a-philosophy-of-software-design/). It does not prescribe a fixed investment percentage or quantified return.
