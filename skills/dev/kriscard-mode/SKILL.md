@@ -1,6 +1,6 @@
 ---
 name: kriscard-mode
-description: Route engineering work through one Kriscard playbook and the installed skills that fit the job. Use when the user enables Kriscard mode or asks for its feature, bug-fix, refactor, migration, investigation, review, release, or orchestration workflow.
+description: Route engineering work through one Kriscard playbook and the installed skills that fit the job. Use when the user enables Kriscard mode or asks for its feature, bug-fix, refactor, migration, investigation, review, pull-request, release, or orchestration workflow.
 ---
 
 # Kriscard Mode
@@ -11,16 +11,16 @@ Choose the workflow; let focused skills do the work. The user's request remains 
 
 Select exactly one playbook from the requested outcome:
 
-| Outcome                                                   | Playbook                                    |
-| --------------------------------------------------------- | ------------------------------------------- |
-| Add or change product behavior                            | [Feature](playbooks/feature.md)             |
-| Correct broken behavior                                   | [Bug fix](playbooks/bug-fix.md)             |
-| Improve structure without changing behavior               | [Refactor](playbooks/refactor.md)           |
-| Move a dependency, API, data shape, platform, or owner    | [Migration](playbooks/migration.md)         |
-| Explain, diagnose, or recommend without changing anything | [Investigation](playbooks/investigation.md) |
-| Review an existing artifact or change                     | [Review](playbooks/review.md)               |
-| Merge, publish, deploy, or release accepted work          | [Release](playbooks/release.md)             |
-| Coordinate several independent outcomes                   | [Orchestration](playbooks/orchestration.md) |
+| Outcome                                                                                  | Playbook                                    |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------- |
+| Add or change product behavior                                                           | [Feature](playbooks/feature.md)             |
+| Correct broken behavior                                                                  | [Bug fix](playbooks/bug-fix.md)             |
+| Improve structure without changing behavior                                              | [Refactor](playbooks/refactor.md)           |
+| Move a dependency, API, data shape, platform, or owner                                   | [Migration](playbooks/migration.md)         |
+| Explain, diagnose, or recommend without changing anything                                | [Investigation](playbooks/investigation.md) |
+| Review an existing artifact or change                                                    | [Review](playbooks/review.md)               |
+| Prepare, open, update, or recover a PR; merge, publish, deploy, or release accepted work | [Release](playbooks/release.md)             |
+| Coordinate several independent outcomes                                                  | [Orchestration](playbooks/orchestration.md) |
 
 Ask one routing clarification when two routes remain materially plausible. This limit applies only
 to choosing the playbook; resolve consequential requirements and design questions within it, using
@@ -62,6 +62,11 @@ the task does not depend on library-specific behavior.
 
 Use these conditional routes when the corresponding work is present; the selected skill owns the
 implementation rules and version checks:
+
+- For explicitly requested PR preparation, creation, updates or recovery, `create-pr` owns the
+  workflow through the [Release playbook's PR branch](playbooks/release.md#pull-requests). After
+  implementation or orchestration, treat requested PR work as a separate outcome; completion alone
+  does not authorize it. `code-review` remains the technical review owner.
 
 - `test` owns behavior coverage and test strategy; `playwright` owns Playwright suites and runner
   mechanics, and `msw` owns request interception and handler lifecycle. Use `agent-browser` for
