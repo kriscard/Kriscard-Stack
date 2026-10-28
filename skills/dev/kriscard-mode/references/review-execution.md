@@ -48,10 +48,10 @@ parent transcript. Keep the full quality lens available to each reviewer, not sp
 ### Native Pi sessions
 
 Current Kstack launches native Pi; its saved conversations are not the separate Pi Durable harness.
-For approved native delegation, load the installed executor's skill and discover its live contract.
-If Herdr is selected, obtain the topology approval and follow its authoritative skill. If a native
-subagent executor is selected, follow its capability and fresh-context controls. This reference does
-not grant either executor new authority or copy a second process-management layer.
+For approved Kstack delegation, load `kstack-orchestrator` and follow the explicit Pi Durable handoff
+below. Native Pi remains the coordinator; a native subagent extension or Herdr is not an automatic
+substitute for that backend. If a required capability is unavailable, report the blocker and ask the
+user before changing the agreed executor or execution mode.
 
 Keep named session IDs and bounded result packets in the coordinating session. Read-only reviewers
 may inspect the same pinned checkout while no writer changes it. Writers need exclusive checkout
