@@ -31,19 +31,22 @@ worker selects one playbook for its own outcome; the parent keeps its coordinati
 
 Read this index at task start. Load the full principle only when current evidence matches its trigger:
 
-| When                                                                                         | Principle                                                                                  |
-| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Work crosses an ownership or responsibility boundary                                         | [Boundary discipline](../principle-boundary-discipline/SKILL.md)                           |
-| Preparing or changing PR grouping                                                            | [One goal per PR](../principle-one-goal-per-pull-request/SKILL.md)                         |
-| Verification depends on a particular revision                                                | [Evidence follows the commit](../principle-evidence-follows-the-commit/SKILL.md)           |
-| A handoff contains broad history or unrelated material                                       | [Minimize context](../principle-minimize-context/SKILL.md)                                 |
-| Acceptance requires behavior on a real surface                                               | [Prove real behavior](../principle-prove-real-behavior/SKILL.md)                           |
-| Implementation departs from an approved plan                                                 | [Stop on plan drift](../principle-stop-on-plan-drift/SKILL.md)                             |
-| A feature or fix raises a concrete design question in its affected responsibility            | [Invest in design](../principle-invest-in-design/SKILL.md)                                 |
-| Choosing the shape of a new or materially extended mechanism                                 | [Develop complete capabilities](../principle-build-the-abstraction/SKILL.md)               |
-| Creating or changing an interface with non-obvious caller guarantees, effects, or invariants | [Describe interfaces first](../principle-describe-interfaces-first/SKILL.md)               |
-| Adding error handling for a condition that may be normal, idempotent, or preventable         | [Eliminate avoidable error states](../principle-eliminate-avoidable-error-states/SKILL.md) |
-| Proposing a competing convention within an established category                              | [Change conventions completely](../principle-change-conventions-completely/SKILL.md)       |
+| When                                                                                          | Principle                                                                                  |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| A feature request prescribes a solution without establishing the underlying user problem      | [Verify the problem](../principle-verify-the-problem/SKILL.md)                             |
+| Choosing between proposed work when timing and user impact could change the order             | [Prioritize outcomes now](../principle-prioritize-outcomes-now/SKILL.md)                   |
+| Planning uncertain product work whose feedback would wait until the whole project is complete | [Scope for useful feedback](../principle-scope-for-feedback/SKILL.md)                      |
+| Work crosses an ownership or responsibility boundary                                          | [Boundary discipline](../principle-boundary-discipline/SKILL.md)                           |
+| Preparing or changing PR grouping                                                             | [One goal per PR](../principle-one-goal-per-pull-request/SKILL.md)                         |
+| Verification depends on a particular revision                                                 | [Evidence follows the commit](../principle-evidence-follows-the-commit/SKILL.md)           |
+| A handoff contains broad history or unrelated material                                        | [Minimize context](../principle-minimize-context/SKILL.md)                                 |
+| Acceptance requires behavior on a real surface                                                | [Prove real behavior](../principle-prove-real-behavior/SKILL.md)                           |
+| Implementation departs from an approved plan                                                  | [Stop on plan drift](../principle-stop-on-plan-drift/SKILL.md)                             |
+| A feature or fix raises a concrete design question in its affected responsibility             | [Invest in design](../principle-invest-in-design/SKILL.md)                                 |
+| Choosing the shape of a new or materially extended mechanism                                  | [Develop complete capabilities](../principle-build-the-abstraction/SKILL.md)               |
+| Creating or changing an interface with non-obvious caller guarantees, effects, or invariants  | [Describe interfaces first](../principle-describe-interfaces-first/SKILL.md)               |
+| Adding error handling for a condition that may be normal, idempotent, or preventable          | [Eliminate avoidable error states](../principle-eliminate-avoidable-error-states/SKILL.md) |
+| Proposing a competing convention within an established category                               | [Change conventions completely](../principle-change-conventions-completely/SKILL.md)       |
 
 ## Compose skills
 
