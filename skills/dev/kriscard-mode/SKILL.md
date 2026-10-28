@@ -31,14 +31,19 @@ worker selects one playbook for its own outcome; the parent keeps its coordinati
 
 Read this index at task start. Load the full principle only when current evidence matches its trigger:
 
-| When                                                   | Principle                                                                        |
-| ------------------------------------------------------ | -------------------------------------------------------------------------------- |
-| Work crosses an ownership or responsibility boundary   | [Boundary discipline](../principle-boundary-discipline/SKILL.md)                 |
-| Preparing or changing PR grouping                      | [One goal per PR](../principle-one-goal-per-pull-request/SKILL.md)               |
-| Verification depends on a particular revision          | [Evidence follows the commit](../principle-evidence-follows-the-commit/SKILL.md) |
-| A handoff contains broad history or unrelated material | [Minimize context](../principle-minimize-context/SKILL.md)                       |
-| Acceptance requires behavior on a real surface         | [Prove real behavior](../principle-prove-real-behavior/SKILL.md)                 |
-| Implementation departs from an approved plan           | [Stop on plan drift](../principle-stop-on-plan-drift/SKILL.md)                   |
+| When                                                                                         | Principle                                                                                  |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Work crosses an ownership or responsibility boundary                                         | [Boundary discipline](../principle-boundary-discipline/SKILL.md)                           |
+| Preparing or changing PR grouping                                                            | [One goal per PR](../principle-one-goal-per-pull-request/SKILL.md)                         |
+| Verification depends on a particular revision                                                | [Evidence follows the commit](../principle-evidence-follows-the-commit/SKILL.md)           |
+| A handoff contains broad history or unrelated material                                       | [Minimize context](../principle-minimize-context/SKILL.md)                                 |
+| Acceptance requires behavior on a real surface                                               | [Prove real behavior](../principle-prove-real-behavior/SKILL.md)                           |
+| Implementation departs from an approved plan                                                 | [Stop on plan drift](../principle-stop-on-plan-drift/SKILL.md)                             |
+| A feature or fix raises a concrete design question in its affected responsibility            | [Invest in design](../principle-invest-in-design/SKILL.md)                                 |
+| Choosing the shape of a new or materially extended mechanism                                 | [Develop complete capabilities](../principle-build-the-abstraction/SKILL.md)               |
+| Creating or changing an interface with non-obvious caller guarantees, effects, or invariants | [Describe interfaces first](../principle-describe-interfaces-first/SKILL.md)               |
+| Adding error handling for a condition that may be normal, idempotent, or preventable         | [Eliminate avoidable error states](../principle-eliminate-avoidable-error-states/SKILL.md) |
+| Proposing a competing convention within an established category                              | [Change conventions completely](../principle-change-conventions-completely/SKILL.md)       |
 
 ## Compose skills
 
@@ -48,16 +53,27 @@ General-purpose expertise belongs to the separately owned Skills collection; dis
 through the host rather than treating that ownership name as a filesystem path.
 
 General skills own workflow, architecture, test scope, review process, and evidence. Route
-language-wide TypeScript modeling, narrowing, generics, assertions, and runtime type evidence to
-`typescript`. For browser-facing frontend work, route ownership, validation and schema trust
-boundaries, and file organization to `frontend`. For React work, route component composition,
-hooks, state, and providers to `react`. Route native/mobile work to its matching platform skills and
-actual framework mechanics to the installed matching framework skill, such as
-`nextjs-app-architecture` only for Next.js App Router work.
+native/mobile work to its matching platform skills and actual framework mechanics to the installed
+matching framework skill, such as `nextjs-app-architecture` only for Next.js App Router work.
 
 Matching library specialists own installed-version and versioned library facts. Load one only when
 its precise branch applies, and leave it unloaded when no installed skill matches the dependency or
 the task does not depend on library-specific behavior.
+
+Use these conditional routes when the corresponding work is present; the selected skill owns the
+implementation rules and version checks:
+
+- `test` owns behavior coverage and test strategy; `playwright` owns Playwright suites and runner
+  mechanics, and `msw` owns request interception and handler lifecycle. Use `agent-browser` for
+  one-off browser observation rather than treating it as test-suite authoring.
+- `frontend` owns browser contracts, validation and schema trust boundaries, file organization,
+  design policy, and accessibility; `tailwind` owns Tailwind utilities, themes, source visibility,
+  and generated CSS behavior.
+- `react` owns React composition, hooks, state, and providers; `tanstack-query` owns Query keys,
+  cache lifecycle, invalidation, and mutations when Query behavior is involved.
+- `typescript` owns language-wide modeling, narrowing, generics, assertions, and runtime type
+  evidence; `zod` owns Zod parsing, transforms, structured errors, and schema contracts when Zod
+  behavior is involved.
 
 ## Requirements handoff
 
