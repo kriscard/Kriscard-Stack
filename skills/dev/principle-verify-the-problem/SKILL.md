@@ -59,7 +59,3 @@ Instead of accepting a requested feature at face value, the recommendation separ
 **Input:** A request says only “add AI search”; repository inspection cannot establish the user problem.
 
 **Expected:** State the hypothesis and ask what users cannot find today. Stop solution commitment on that missing decision rather than inventing interviews, demand, or a replacement requirement.
-
-## Source provenance
-
-Adapted from Linear Method's [Build with users](https://linear.app/method/build-with-users) and [Manage design projects](https://linear.app/method/manage-design-projects). The request-validation rule does not grant authority to change approved scope.

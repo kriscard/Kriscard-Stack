@@ -59,7 +59,3 @@ The recommendation distinguishes “valuable eventually” from “worth doing n
 **Input:** A blocker affects an unsupported enterprise workflow. An enabler addresses a demonstrated need for the product's current audience and goal.
 
 **Expected:** Evaluate audience fit and timing; do not mechanically put every blocker first. Escalate a change of target audience to the product owner.
-
-## Source provenance
-
-Adapted from Linear Method's [Prioritize enablers and blockers](https://linear.app/method/prioritize-enablers-and-blockers), [Set useful goals](https://linear.app/method/set-useful-goals), and [Set the product direction](https://linear.app/method/product-direction). This is a prioritization rule, not permission to override commitments or user authority.

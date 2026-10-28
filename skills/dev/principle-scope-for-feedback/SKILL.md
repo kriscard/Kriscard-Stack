@@ -60,7 +60,3 @@ The plan identifies an early usable version, what it intentionally defers, who c
 **Input:** Mid-implementation, a worker notices an opportunity to ship a reduced feature to production, but the accepted plan requires the full behavior and grants no deployment permission.
 
 **Expected:** Preserve valid work, raise the proposed scope change through the planning gate, and keep deployment blocked on its separate authorization. Do not mark planned feedback as collected.
-
-## Source provenance
-
-Adapted from Linear Method's [Scope projects down](https://linear.app/method/scope-projects), [Build with users](https://linear.app/method/build-with-users), and [Launch and keep launching](https://linear.app/method/launching). Early feedback does not replace acceptance checks or release authority.
