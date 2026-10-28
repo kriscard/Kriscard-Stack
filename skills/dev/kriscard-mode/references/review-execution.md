@@ -2,8 +2,10 @@
 
 # Review execution
 
-The review skills own technical judgment. This reference owns bounded handoffs and stage completion.
-Use the host's supported conversations and tools; Git and observed results remain the evidence.
+The installed `code-review` skill owns the portable review workflow and technical judgment. Load
+its matching playbook before preparing code-review handoffs. This reference binds those roles and
+completion requirements to the selected host; it is not a second review engine. Use the host's
+supported conversations and tools; Git and observed results remain the evidence.
 
 ## Agree the boundary before execution
 
@@ -74,16 +76,17 @@ label its limitation; a required independent full loop remains blocked until its
 
 ### Pi Durable integration boundary
 
-`@earendil-works/pi-durable` is an experimental, separate harness. This workflow does not install it,
-replace Kstack's launcher, create a new state store, or claim a production runtime integration.
-A separately authorized prototype can test its persistent conversations, per-agent tools/cwd,
-owned tasks, crash recovery, and revision guards. Keep the shared Markdown workflow usable without it.
+For approved Kstack delegation, load `kstack-orchestrator` and use its explicit Pi Durable backend
+handoff. Interactive Pi remains the coordinator; Durable owns the separate execution's workers,
+conversations, storage, cancellation, and recovery. Follow that skill's live command and worker
+contracts rather than adding another scheduler or treating a native session as a Durable session.
+The general `code-review` skill remains usable without either runtime.
 
-For such a prototype, distinguish persistent storage from memory-only examples, and task cancellation
-from cancelling a wait. Recovery must revalidate the revision. Unsafe interrupted operations require
-inspection; never blindly replay edits, publication, or destructive actions. Bound rounds and resource
-use explicitly rather than looping until the model writes a stop phrase. The harness owns its
-execution state; it does not make a stored verdict authoritative over changed Git or missing evidence.
+Distinguish persistent storage from memory-only examples, and task cancellation from cancelling a
+wait. Recovery must revalidate the revision. Unsafe interrupted operations require inspection;
+never blindly replay edits, publication, or destructive actions. Bound rounds and resource use
+explicitly rather than looping until the model writes a stop phrase. The harness owns execution
+state; it does not make a stored verdict authoritative over changed Git or missing evidence.
 
 ## Audit before claiming ready
 

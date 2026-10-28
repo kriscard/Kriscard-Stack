@@ -8,8 +8,9 @@ rather than forcing code-only criteria.
    explicit authorization for the writer's scope, reviewer topology, executor, checks, and budget.
    Read [Review execution](../references/review-execution.md) before delegated review or a full loop.
    Remain in this playbook as coordinator; a writer selects the appropriate implementation playbook.
-2. **Pin the packet.** For a PR or branch comparison, `pr-review` owns the comparison, originating
-   requirements, and complete code-review workflow; use `review` only for selected/local code.
+2. **Pin the packet.** For code, load the installed `code-review` skill and select its matching
+   PR/branch, working-tree/selected-code, or authorized full-loop playbook. It owns comparison
+   acquisition, originating requirements, technical review, and the portable review workflow.
    Apply `writing-for-agents` (including its skill mechanics for skills) to agent instructions and
    `writing-guidelines` to prose style, including when those artifacts are delivered in a PR.
    Load matching UI or technical specialists only for the artifact's actual surface. Mixed changes
