@@ -1,6 +1,6 @@
 ---
 name: kstack-orchestrator
-description: Clarify independent outcomes and their ownership from native Pi when orchestration is requested. Core role tools do not supply background or parallel workers.
+description: Clarify independent outcomes and their ownership from native Pi when orchestration is requested. Kstack's Durable runtime is currently removed for an example-based rebuild.
 ---
 
 # Kstack Orchestrator
@@ -8,11 +8,11 @@ description: Clarify independent outcomes and their ownership from native Pi whe
 Keep coordination in native Pi. Clarify the requested outcomes, dependencies, approval gates and
 which changes could conflict. Preserve existing work and obtain authority before delegating.
 
-Check the tools supplied by the current host. Kstack's core `durable_plan`, `durable_implement` and
-`durable_review` tools serve bounded role calls in native Pi, not a background worker fleet. Follow
-[Kriscard Mode's role boundaries](../kriscard-mode/SKILL.md#execution) for those calls.
+Check tools actually supplied by the current host. Kstack's previous role integration is removed;
+replacement foreground/background execution is not available yet. Follow
+[Kriscard Mode's execution boundary](../kriscard-mode/SKILL.md#execution).
 
-Background/parallel execution remains deferred. Report that limitation; obtain authority before
-using another available executor. The removed worker commands and receipt protocol stay removed.
+Report missing capabilities and obtain authority before using another executor. Preserve workflow
+ownership in native Pi; the removed worker commands and receipt protocol stay removed.
 
 SSH, Mosh and terminal-session management belong to the user's environment, not this skill.

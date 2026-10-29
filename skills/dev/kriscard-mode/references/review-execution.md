@@ -47,12 +47,10 @@ parent transcript. Keep the full quality lens available to each reviewer, not sp
 
 ### Native Pi sessions
 
-Kstack launches native Pi. Its `durable_review` tool supplies a separate read-only role conversation,
-not an automatic two-reviewer/fresh-verifier workflow. Native Pi supplies bounded revision/context
-and owns adjudication; a repeat pass is explicit. Persistent reviewer history does not imply a fresh
-independent conversation. Check the agreed independence/model requirements against actual host
-capabilities and obtain authority before adding other executors or changing the execution mode.
-SDK IDs are internal, not Kstack worker commands; the removed command protocol stays removed.
+Kstack launches native Pi. Its previous Durable reviewer/runtime is removed for a rebuild; use only
+review capabilities actually supplied by the current host. Native Pi owns bounded revision/context,
+adjudication and repair authority. Report missing independence/model capabilities and obtain
+permission before changing execution mode. The removed worker command protocol stays removed.
 
 Keep named session IDs and bounded result packets in the coordinating session. Read-only reviewers
 may inspect the same pinned checkout while no writer changes it. Writers need exclusive checkout

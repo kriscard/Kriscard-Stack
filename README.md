@@ -16,7 +16,7 @@ pnpm run kstack
 To work in another repository, change to that repository and run the built launcher:
 
 ```bash
-node /path/to/Kriscard-Stack/packages/pi-runner/dist/bin.js
+node /path/to/Kriscard-Stack/packages/kstack/dist/bin.js
 ```
 
 Native Pi options pass through:
@@ -37,19 +37,16 @@ and principles. General-purpose skills remain owned by `kriscard/Skills`.
 Planning, questions and approvals stay in the native Pi conversation. Publication, merges and
 destructive cleanup require explicit authority.
 
-The bundled native extension supplies three Durable role tools: `durable_plan` for read-only drafts,
-`durable_implement` for explicitly approved coding with native confirmation, and `durable_review` for
-separate read-only findings. They follow the official examples, not a second orchestration service.
-Ask normally in native Pi; there are no worker IDs or job commands to manage.
+The previous Durable role integration is checkpointed in commit `16d9ebb` and removed from the
+working tree for an example-based rebuild. No Kstack Durable role tools or background workers are
+currently loaded. The old core-role spec remains historical; it does not approve the expanded rebuild.
 
-Each role keeps SDK history in private SQLite storage for the saved native session. New roles use
-the selected Pi model; saved roles retain theirs unless explicitly overridden. See the
-[runner README](packages/pi-runner/README.md) for resume, configuration and lifecycle limits.
-Coding confirmation requires interactive Pi or a confirmation-capable RPC client; print mode can
-use the read-only roles. The normal native tools remain Pi's responsibility.
+The target is identifiable agents with visible activity, SDK-owned recovery and explicit native-Pi
+workflow ownership. Foreground visibility comes before background orchestration. See the
+[package README](packages/kstack/README.md) for the current package boundary.
 
-Background/parallel agents are deferred. Old worker commands remain removed and old user data is
-untouched; no migration is performed. SSH, Mosh and terminal-session management stay outside Kstack.
+Saved SDK databases, native sessions, credentials and worktrees remain untouched. SSH, Mosh and
+terminal-session management stay outside Kstack.
 
 ## Setup and updates
 
@@ -78,6 +75,6 @@ pnpm run check
 pnpm exec oxlint --deny-warnings --format=agent
 ```
 
-Checks cover lint, build, role/launcher/installer tests, typechecking and formatting. Role tests use
-controlled models, real files/SQLite and actual native Pi, including its confirmation UI protocol.
-They do not assess paid-provider model quality or perform user-global installations.
+Checks cover lint, build, native-launcher/installer tests, typechecking and formatting. The removed
+role-specific tests remain in the checkpoint, not as evidence for a replacement implementation.
+Tests do not perform paid-model requests or user-global installations.

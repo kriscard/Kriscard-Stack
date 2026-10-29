@@ -100,24 +100,13 @@ Preserve explicit user gates for destructive actions, publishing, deployment, an
 Kstack opens native Pi with its normal interface, tools, extensions and JSONL session.
 This skill and its playbooks own workflow selection. Planning and coordination stay in native Pi.
 
-When `durable_plan` is available, use it for a bounded read-only planning assignment: include the
-relevant request, project instructions and artifact references, not this conversation's transcript.
-Resolve inaccessible ticket/source input first. Use `resume: true` to recover saved work/history;
-a new task keeps the saved model unless explicitly overridden. The SDK proposal is a draft: native
-Pi still owns spec files, user discussion and approval gates. Follow the requirements handoff above.
+The previous Durable role tools were removed for an example-based rebuild. Check actual host
+capabilities before promising role execution or delegation; report unavailable capabilities instead
+of invoking removed tools or inventing commands. Follow the installed implementation/review
+workflows and the requirements handoff above. Native Pi retains spec files and approval decisions.
 
-For an explicit implementation request, apply the installed `implement` workflow and validate the
-accepted task/artifacts before invoking `durable_implement`. Supply only that approved scope and
-relevant instructions. Pi asks for confirmation before coding or resuming coding; refusal or missing
-UI is not approval. Return role questions/deviations here instead of expanding the assignment.
-
-For an authorized review, use the installed `code-review` workflow. `durable_review` can perform its
-bounded read-only pass with an explicit model and supplied diff/file references. Keep adjudication,
-repair authorization and evidence ownership here; request another pass explicitly. Tool availability
-does not grant fan-out or independent-review authority that the workflow/user has withheld.
-
-Check actual host capabilities before promising delegation. Background execution is not supplied
-by the core roles. SSH and terminal-session management remain external.
+The target is visible, identifiable SDK agents with explicit workflow ownership; it is not an
+available runtime yet. SSH and terminal-session management remain external.
 
 Git, GitHub, project files, tests, and user-approved notes remain the ordinary sources of truth.
 
