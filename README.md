@@ -1,13 +1,7 @@
 # Kriscard Stack
 
-Kriscard Stack opens interactive Pi with your engineering skills, principles and playbooks.
-Pi Durable is the execution backend used by the orchestration workflow, not the frontend.
-
-```text
-kstack → interactive Pi → Kriscard Mode → playbook → relevant skills
-                           ↓ when delegated execution is needed
-                    kstack-orchestrator → Pi Durable backend → results
-```
+Kriscard Stack opens native Pi with Kriscard Mode, engineering skills and playbooks.
+Pi owns the interface, tools, extensions and main conversation.
 
 ## Run from this checkout
 
@@ -19,84 +13,63 @@ pnpm run build
 pnpm run kstack
 ```
 
-This opens Pi's normal interface, editor, tools, extensions and session controls. Kriscard Mode
-selects the playbook and loads applicable principles and skills. Ordinary tasks stay in that Pi
-conversation; they do not open a Durable Harness.
-
 To work in another repository, change to that repository and run the built launcher:
 
 ```bash
 node /path/to/Kriscard-Stack/packages/pi-runner/dist/bin.js
 ```
 
-## Native Pi sessions
-
-Pi owns the main conversation and its JSONL session. Native flags pass through unchanged:
+Native Pi options pass through:
 
 ```bash
 kstack --continue
 kstack --resume
-kstack run "Fix the failing checkout test"
+kstack run "Plan a fix for the failing checkout test without editing files"
 ```
 
-The existing Pi configuration supplies models and credentials. `KRISCARD_MODEL=provider:model-id`
-remains an explicit override. Kstack has no separate login or credential store. `kstack pi` is an
-alias for the same native frontend.
+Pi's existing configuration supplies models and credentials. `KRISCARD_MODEL=provider:model-id`
+is an explicit override. `kstack pi` uses the same native frontend; `kriscard` aliases `kstack`.
 
-## Pi Durable execution backend
+## Workflow
 
-For approved delegation, `kstack-orchestrator` invokes the explicit backend. The launcher advertises
-its absolute command to Pi, so this does not require a global Kstack installation.
+[Kriscard Mode](skills/dev/kriscard-mode/SKILL.md) chooses one playbook and loads applicable skills
+and principles. General-purpose skills remain owned by `kriscard/Skills`.
+Planning, questions and approvals stay in the native Pi conversation. Publication, merges and
+destructive cleanup require explicit authority.
 
-```bash
-kstack durable run --session /private/path/task.sqlite "<bounded task packet>"
-kstack durable --session /private/path/task.sqlite  # resume pending work, without submitting it again
-```
+The bundled native extension supplies three Durable role tools: `durable_plan` for read-only drafts,
+`durable_implement` for explicitly approved coding with native confirmation, and `durable_review` for
+separate read-only findings. They follow the official examples, not a second orchestration service.
+Ask normally in native Pi; there are no worker IDs or job commands to manage.
 
-The command returns the execution's results when it finishes. This is a foreground command handoff,
-not a background notification bridge or a worker panel inside Pi's interface. Inside the backend,
-the SDK `subagent` tool supplies persistent workers and result delivery.
+Each role keeps SDK history in private SQLite storage for the saved native session. New roles use
+the selected Pi model; saved roles retain theirs unless explicitly overridden. See the
+[runner README](packages/pi-runner/README.md) for resume, configuration and lifecycle limits.
+Coding confirmation requires interactive Pi or a confirmation-capable RPC client; print mode can
+use the read-only roles. The normal native tools remain Pi's responsibility.
 
-Backend storage defaults to `.kstack/session.sqlite`, separate from native Pi's session. Keep
-`.kstack/` out of Git; it contains private execution state. Only explicit backend invocation opens it.
+Background/parallel agents are deferred. Old worker commands remain removed and old user data is
+untouched; no migration is performed. SSH, Mosh and terminal-session management stay outside Kstack.
 
-The optional backend diagnostic terminal has its own controls (these are not native Pi commands):
+## Setup and updates
 
-- `:quit` closes the Harness, retaining pending work for the next reopen.
-- Ctrl+C aborts the main turn; background workers continue.
-- `:stop` aborts current main and background work, retaining conversations.
-- `:compact` requests SDK compaction.
-- EOF waits for current main and background work, then closes the session.
+`kstack setup` and `kstack update` preview global CLI installation and general-purpose skill
+installation from `kriscard/Skills`. They require confirmation unless `--yes` is supplied,
+preserve unrelated skills and block conflicting ownership.
 
-`kstack durable run` waits for backend worker results before exiting. Use one owner process per
-SQLite file. Interrupted unsafe tools follow SDK recovery semantics: inspect their effects before
-retrying. Closing native Pi does not convert its JSONL history into a Durable session.
+Workflow skills ship with the CLI rather than being installed a second time. Existing links into
+Kstack's bundled skills are synchronized after setup/update and before launching Pi. Switching Node
+installations repoints shared links to the executing bundle; other agents follow the most recently
+activated bundle. `kstack sync-skills` performs just this repair. Missing links are not created.
+Real directories and links outside Kstack are never overwritten; conflicting older copies require
+a separately approved, backed-up migration. Custom `KSTACK_MODE_PATH` locations are not managed.
 
-## Your workflow
+Only `kstack update` uses the Soft Glow display when the runtime supports it. Setup stays plain.
+Pipes, CI, nonempty `NO_COLOR`, `TERM=dumb` and unsupported native rendering use plain output.
+`--plain`, `--no-motion` and `--verbose` control update presentation. No command upgrades global Node.
 
-- [Kriscard Mode](skills/dev/kriscard-mode/SKILL.md) selects one of the existing playbooks.
-- Principles are indexed in the mode and loaded when their triggers apply.
-- General-purpose skills remain owned by `kriscard/Skills` and are discovered through Pi's resource loader.
-- [Kstack Orchestrator](skills/dev/kstack-orchestrator/SKILL.md) coordinates from interactive Pi,
-  invokes the Durable backend for approved execution, and checks the returned evidence.
-  Git branches and worktrees remain ordinary Git resources.
-- Project verification uses the project's existing commands and skills. A worker's success message
-  is not proof that the behavior works.
-
-Adding skills or playbooks does not require changing TypeScript. Workers read their own checkout's
-instructions. This is a trusted local coding runtime, not a sandbox; its tools can read, write and
-execute commands with your user permissions. Publishing, merging and destructive cleanup retain
-explicit user approval gates.
-
-## Setup
-
-Native histories and older Kstack databases are not converted or deleted automatically. The Durable
-backend is not a native-extension compatibility layer. `kriscard` remains an alias for `kstack`.
-
-Once the package is published, `kstack setup` and `kstack update` preview global CLI installation
-and skill installation from `kriscard/Skills` and `kriscard/Kriscard-Stack`. They require confirmation
-unless `--yes` is supplied, preserve unrelated skills and block conflicting skill ownership.
-Herdr is not required. No global installation or settings change occurs during an ordinary run.
+Ordinary launches do not install packages or change settings, but may repair existing Kstack skill
+links. Herdr is not required.
 
 ## Development
 
@@ -105,11 +78,6 @@ pnpm run check
 pnpm exec oxlint --deny-warnings --format=agent
 ```
 
-`check` runs lint, build, typechecking and formatting checks. There is no automated test suite;
-these checks do not verify runtime behavior.
-
-The runtime follows Pi Durable's [coding agent](https://github.com/earendil-works/pi/blob/main/packages/durable/test/examples/25-coding-agent.ts),
-[background subagents](https://github.com/earendil-works/pi/blob/main/packages/durable/test/examples/22-subagent-background.ts)
-and [recovery](https://github.com/earendil-works/pi/blob/main/packages/durable/test/examples/12-recovery.ts)
-examples. The experimental SDK is version-pinned; adapt to its installed public API rather than
-adding a parallel scheduler, workflow database or provider framework.
+Checks cover lint, build, role/launcher/installer tests, typechecking and formatting. Role tests use
+controlled models, real files/SQLite and actual native Pi, including its confirmation UI protocol.
+They do not assess paid-provider model quality or perform user-global installations.

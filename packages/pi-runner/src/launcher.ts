@@ -30,7 +30,7 @@ function expandHome(path: string): string {
   return resolve(path);
 }
 
-function piAgentDirectory(): string {
+export function piAgentDirectory(): string {
   const configured = process.env.PI_CODING_AGENT_DIR;
 
   return configured ? expandHome(configured) : join(homedir(), ".pi", "agent");
@@ -71,20 +71,11 @@ export function resolveKriscardSkillPackage(modePath: string): string | undefine
 }
 
 export function buildPiArguments(options: BuildPiArgumentsOptions): string[] {
-  const durableCommand = [
-    process.execPath,
-    join(dirname(fileURLToPath(import.meta.url)), "bin.js"),
-    "durable",
-  ]
-    .map((argument) => JSON.stringify(argument))
-    .join(" ");
-
   const modeDirectory = expandHome(options.modePath);
 
   const instructions = `${KRISCARD_MODE_DIRECTIVE}
 Kriscard Mode directory: ${modeDirectory} (base for its relative links).
-You are in the interactive Pi frontend.
-Pi Durable backend command: ${durableCommand}`;
+You are in native Pi. Keep planning and orchestration in this conversation.`;
 
   const skillPackage = resolveKriscardSkillPackage(options.modePath);
 

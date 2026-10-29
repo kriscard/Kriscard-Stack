@@ -2,7 +2,12 @@ import { spawn } from "node:child_process";
 
 export const PI_AGENT = "pi";
 
-export const KSTACK_PACKAGE = "@kriscard/kstack@latest";
+export const KSTACK_PACKAGE = "@kriscard/kstack";
+
+export type SetupExecution = {
+  signal?: AbortSignal;
+  onProgress?: (label: string) => void;
+};
 
 export type CommandResult = {
   code: number;
@@ -13,7 +18,7 @@ export type CommandResult = {
 export type CommandRunner = (
   command: string,
   args: readonly string[],
-  options?: { env?: NodeJS.ProcessEnv },
+  options?: { env?: NodeJS.ProcessEnv; signal?: AbortSignal },
 ) => Promise<CommandResult>;
 
 export type InstalledSkill = {
@@ -34,34 +39,36 @@ export type SetupPlan = {
     candidateSource: string;
     installedSource: string;
   }>;
-  commands: Array<{ command: string; args: string[] }>;
+  commands: Array<{ label: string; command: string; args: string[] }>;
 };
 
-const skillSelections = [
-  { source: "kriscard/Skills", skill: "*" },
-  { source: "kriscard/Kriscard-Stack", skill: "*" },
-] as const;
+const skillSelections = [{ source: "kriscard/Skills", skill: "*" }] as const;
 
 export const runCommand: CommandRunner = (command, args, options = {}) =>
   new Promise((resolve, reject) => {
     const child = spawn(command, [...args], {
       env: options.env ?? process.env,
+      signal: options.signal,
       stdio: ["ignore", "pipe", "pipe"],
     });
 
     let stdout = "";
     let stderr = "";
+    let failure: Error | undefined;
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
+    child.stdout.on("data", (text: string) => {
+      stdout += text;
     });
-    child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
+    child.stderr.on("data", (text: string) => {
+      stderr += text;
     });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      resolve({ code: code ?? 1, stdout, stderr });
+    child.once("error", (error) => {
+      failure = error;
+    });
+    child.once("close", (code) => {
+      if (failure) reject(failure);
+      else resolve({ code: code ?? 1, stdout, stderr });
     });
   });
 
@@ -124,10 +131,12 @@ async function probeSource(
   runner: CommandRunner,
   source: string,
   skill: string,
+  signal?: AbortSignal,
 ): Promise<SkillCandidate[]> {
   const result = requireSuccess(
     await runner("npx", ["--yes", "skills@latest", "add", source, "--list"], {
       env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
+      signal,
     }),
     `Skill discovery for ${source}`,
   );
@@ -142,17 +151,16 @@ async function probeSource(
   return selected.map((name) => ({ name, source }));
 }
 
-async function readInstalledSkills(runner: CommandRunner): Promise<InstalledSkill[]> {
+async function readInstalledSkills(
+  runner: CommandRunner,
+  signal?: AbortSignal,
+): Promise<InstalledSkill[]> {
   const result = requireSuccess(
-    await runner("npx", [
-      "--yes",
-      "skills@latest",
-      "list",
-      "--global",
-      "--agent",
-      PI_AGENT,
-      "--json",
-    ]),
+    await runner(
+      "npx",
+      ["--yes", "skills@latest", "list", "--global", "--agent", PI_AGENT, "--json"],
+      { signal },
+    ),
     "Installed skill discovery for Pi",
   );
 
@@ -169,13 +177,15 @@ function sameSource(candidate: string, installed: string): boolean {
   return candidate === installed;
 }
 
-function installationCommands(): Array<{ command: string; args: string[] }> {
+function installationCommands(): SetupPlan["commands"] {
   return [
     {
+      label: "Updating Kstack CLI",
       command: "npm",
-      args: ["install", "--global", KSTACK_PACKAGE],
+      args: ["install", "--global", `${KSTACK_PACKAGE}@latest`],
     },
     ...skillSelections.map(({ source, skill }) => ({
+      label: "Updating general Pi skills",
       command: "npx",
       args: [
         "--yes",
@@ -194,10 +204,17 @@ function installationCommands(): Array<{ command: string; args: string[] }> {
   ];
 }
 
-export async function createSetupPlan(runner: CommandRunner = runCommand): Promise<SetupPlan> {
+export async function createSetupPlan(
+  runner: CommandRunner = runCommand,
+  execution: SetupExecution = {},
+): Promise<SetupPlan> {
+  execution.onProgress?.("Discovering general Pi skills");
+
   const candidates = (
     await Promise.all(
-      skillSelections.map(({ source, skill }) => probeSource(runner, source, skill)),
+      skillSelections.map(({ source, skill }) =>
+        probeSource(runner, source, skill, execution.signal),
+      ),
     )
   ).flat();
 
@@ -215,7 +232,8 @@ export async function createSetupPlan(runner: CommandRunner = runCommand): Promi
     candidateOwners.set(candidate.name, candidate.source);
   }
 
-  const installed = await readInstalledSkills(runner);
+  execution.onProgress?.("Checking installed skill ownership");
+  const installed = await readInstalledSkills(runner, execution.signal);
 
   const conflicts = candidates.flatMap((candidate) => {
     const existing = installed.find((skill) => skill.name === candidate.name);
@@ -238,15 +256,7 @@ export async function createSetupPlan(runner: CommandRunner = runCommand): Promi
   };
 }
 
-function displayCommand(command: string, args: readonly string[]): string {
-  return [command, ...args.map((argument) => JSON.stringify(argument))].join(" ");
-}
-
 export function formatSetupPlan(plan: SetupPlan, operation: string): string {
-  const sources = skillSelections
-    .map(({ source, skill }) => `  - ${source}: ${skill === "*" ? "all discovered skills" : skill}`)
-    .join("\n");
-
   const conflicts = plan.conflicts.length
     ? `\nConflicts:\n${plan.conflicts
         .map(
@@ -256,46 +266,43 @@ export function formatSetupPlan(plan: SetupPlan, operation: string): string {
         .join("\n")}`
     : "";
 
-  return `${operation} preview
-
-Global CLI:
-  - npm install --global ${KSTACK_PACKAGE}
-
-Global Pi skills (${plan.candidates.length}, Skills CLI default linking mode):
-${sources}
-  - target: ~/.agents/skills with Pi links managed by the Skills CLI
-
-Commands after confirmation:
-${plan.commands.map((step) => `  - ${displayCommand(step.command, step.args)}`).join("\n")}
-
-Skills CLI may collect anonymous telemetry. Set DO_NOT_TRACK=1 or DISABLE_TELEMETRY=1 to disable it.${conflicts}
-
-Unrelated installed skills will not be removed.`;
+  return `${operation} Kstack\n\n  CLI      latest (global npm installation)\n  Skills   ${plan.candidates.length} general Pi skills from kriscard/Skills\n  Bundled  workflow skills ship with the CLI; existing links are repaired\n\nUnrelated skills are preserved. Changes require confirmation.\nSkills CLI telemetry: opt out with DO_NOT_TRACK=1 or DISABLE_TELEMETRY=1.${conflicts}`;
 }
 
 export async function applySetupPlan(
   plan: SetupPlan,
   runner: CommandRunner = runCommand,
   output: (value: string) => void = (value) => process.stdout.write(value),
+  execution: SetupExecution = {},
 ): Promise<void> {
   if (plan.conflicts.length) {
     throw new Error("Resolve the reported skill ownership conflicts first");
   }
 
   for (const step of plan.commands) {
+    execution.signal?.throwIfAborted();
+    execution.onProgress?.(step.label);
+
     const result = requireSuccess(
-      await runner(step.command, step.args),
-      `${step.command} ${step.args.join(" ")}`,
+      await runner(step.command, step.args, { signal: execution.signal }),
+      step.label,
     );
 
     if (result.stdout.trim()) output(`${result.stdout.trim()}\n`);
   }
 
-  for (const binary of ["kstack", "kriscard"]) {
-    requireSuccess(await runner(binary, ["--help"]), `${binary} verification`);
-  }
+  // Re-enter the installed CLI: this updater may still have the previous release in memory.
+  execution.onProgress?.("Synchronizing bundled skill links");
 
-  const installed = await readInstalledSkills(runner);
+  const synchronized = requireSuccess(
+    await runner("kstack", ["sync-skills"], { signal: execution.signal }),
+    "Kstack skill link synchronization",
+  );
+
+  if (synchronized.stdout.trim()) output(`${synchronized.stdout.trim()}\n`);
+
+  execution.onProgress?.("Verifying Pi skill ownership");
+  const installed = await readInstalledSkills(runner, execution.signal);
 
   for (const candidate of plan.candidates) {
     const match = installed.find((skill) => skill.name === candidate.name);

@@ -4,6 +4,3 @@ packages:
 linkWorkspacePackages: true
 preferWorkspacePackages: true
 sharedWorkspaceLockfile: true
-
-allowBuilds:
-  fs-ext@2.1.1: true

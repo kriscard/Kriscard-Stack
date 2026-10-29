@@ -95,17 +95,29 @@ invocation or approved plan. Small, clear changes may proceed directly.
 
 Preserve explicit user gates for destructive actions, publishing, deployment, and merging.
 
-## Durable execution
+## Execution
 
-Kstack opens interactive Pi. Pi owns the interface, main conversation, tools and native JSONL
-session. Keep ordinary work in that conversation. This skill and its playbooks own the workflow.
+Kstack opens native Pi with its normal interface, tools, extensions and JSONL session.
+This skill and its playbooks own workflow selection. Planning and coordination stay in native Pi.
 
-For approved delegated execution, the Orchestration playbook uses `kstack-orchestrator` to invoke
-the explicit Pi Durable backend. The launcher advertises its exact command. Durable owns that
-execution's conversations, tools, background workers and recovery—not the interactive frontend.
-Native sessions and Durable SQLite files are separate and are not automatically converted.
-Reopen the same backend storage to resume pending SDK work; inspect interrupted unsafe effects
-before retrying them. Use only the capabilities actually supplied by the current host.
+When `durable_plan` is available, use it for a bounded read-only planning assignment: include the
+relevant request, project instructions and artifact references, not this conversation's transcript.
+Resolve inaccessible ticket/source input first. Use `resume: true` to recover saved work/history;
+a new task keeps the saved model unless explicitly overridden. The SDK proposal is a draft: native
+Pi still owns spec files, user discussion and approval gates. Follow the requirements handoff above.
+
+For an explicit implementation request, apply the installed `implement` workflow and validate the
+accepted task/artifacts before invoking `durable_implement`. Supply only that approved scope and
+relevant instructions. Pi asks for confirmation before coding or resuming coding; refusal or missing
+UI is not approval. Return role questions/deviations here instead of expanding the assignment.
+
+For an authorized review, use the installed `code-review` workflow. `durable_review` can perform its
+bounded read-only pass with an explicit model and supplied diff/file references. Keep adjudication,
+repair authorization and evidence ownership here; request another pass explicitly. Tool availability
+does not grant fan-out or independent-review authority that the workflow/user has withheld.
+
+Check actual host capabilities before promising delegation. Background execution is not supplied
+by the core roles. SSH and terminal-session management remain external.
 
 Git, GitHub, project files, tests, and user-approved notes remain the ordinary sources of truth.
 

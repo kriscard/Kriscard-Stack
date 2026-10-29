@@ -47,11 +47,12 @@ parent transcript. Keep the full quality lens available to each reviewer, not sp
 
 ### Native Pi sessions
 
-Current Kstack launches native Pi; its saved conversations are not the separate Pi Durable harness.
-For approved Kstack delegation, load `kstack-orchestrator` and follow the explicit Pi Durable handoff
-below. Native Pi remains the coordinator; a native subagent extension or Herdr is not an automatic
-substitute for that backend. If a required capability is unavailable, report the blocker and ask the
-user before changing the agreed executor or execution mode.
+Kstack launches native Pi. Its `durable_review` tool supplies a separate read-only role conversation,
+not an automatic two-reviewer/fresh-verifier workflow. Native Pi supplies bounded revision/context
+and owns adjudication; a repeat pass is explicit. Persistent reviewer history does not imply a fresh
+independent conversation. Check the agreed independence/model requirements against actual host
+capabilities and obtain authority before adding other executors or changing the execution mode.
+SDK IDs are internal, not Kstack worker commands; the removed command protocol stays removed.
 
 Keep named session IDs and bounded result packets in the coordinating session. Read-only reviewers
 may inspect the same pinned checkout while no writer changes it. Writers need exclusive checkout
@@ -70,23 +71,9 @@ Use host-supported tool/permission restrictions for read-only inspection. Merely
 Write is insufficient if unrestricted shell or MCP tools can still mutate state. Isolate mutable
 verification work from the author's checkout.
 
-Use native continuation/resume only as documented for the installed version. Do not claim Pi Durable's
-step-level recovery for a Claude session. If agents are unavailable, offer a sequential review and
-label its limitation; a required independent full loop remains blocked until its owner accepts a change.
-
-### Pi Durable integration boundary
-
-For approved Kstack delegation, load `kstack-orchestrator` and use its explicit Pi Durable backend
-handoff. Interactive Pi remains the coordinator; Durable owns the separate execution's workers,
-conversations, storage, cancellation, and recovery. Follow that skill's live command and worker
-contracts rather than adding another scheduler or treating a native session as a Durable session.
-The general `code-review` skill remains usable without either runtime.
-
-Distinguish persistent storage from memory-only examples, and task cancellation from cancelling a
-wait. Recovery must revalidate the revision. Unsafe interrupted operations require inspection;
-never blindly replay edits, publication, or destructive actions. Bound rounds and resource use
-explicitly rather than looping until the model writes a stop phrase. The harness owns execution
-state; it does not make a stored verdict authoritative over changed Git or missing evidence.
+Use native continuation/resume only as documented for the installed version. If agents are
+unavailable, offer a sequential review and label its limitation; a required independent full loop
+remains blocked until its owner accepts a change. Revalidate the revision after any resumption.
 
 ## Audit before claiming ready
 
@@ -104,6 +91,4 @@ unresolved design conflict, or a changed revision. Publication and merge remain 
 ## Sources and limits
 
 - [Pstack interrogation](https://github.com/cursor/plugins/blob/9580c23696ac8d7abed0c166f2f9918800afb819/pstack/skills/interrogate/SKILL.md): independent full-context reviews and lead judgment, not hard-coded model IDs.
-- [Pi Durable README](https://github.com/earendil-works/pi/blob/f321e5bdd26b3624bfb2ab182a334d0a5edb698a/packages/durable/README.md): persistent storage, ownership, replay, and cancellation semantics. Recheck APIs for the installed version before implementation.
-- [Pi Durable reviewer example](https://github.com/earendil-works/pi/blob/f321e5bdd26b3624bfb2ab182a334d0a5edb698a/packages/durable/test/examples/27-reviewer.ts): per-conversation reviewer configuration; its memory storage and text-based continuation are not a production recovery/budget policy.
 - [Claude Code subagents](https://code.claude.com/docs/en/sub-agents): native agent configuration, tools, permissions, and explicit skill loading. Runtime compatibility requires exercising the installed host; reading these docs alone is not a passing execution test.
