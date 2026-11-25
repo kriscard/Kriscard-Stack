@@ -11,13 +11,14 @@
     "lint:fix": "oxlint --fix",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
-    "check": "pnpm run lint && pnpm run build && pnpm run typecheck && pnpm run format:check",
-    "kstack": "node --enable-source-maps packages/pi-runner/dist/bin.js",
-    "kriscard": "node --enable-source-maps packages/pi-runner/dist/bin.js"
+    "test": "pnpm --filter @kriscard/kstack test",
+    "check": "pnpm run lint && pnpm run build && pnpm run test && pnpm run typecheck && pnpm run format:check",
+    "kstack": "node --enable-source-maps packages/kstack/dist/bin.js",
+    "kriscard": "node --enable-source-maps packages/kstack/dist/bin.js"
   },
   "devDependencies": {
     "@oxlint/plugins": "1.87.0",
-    "@types/node": "24.10.0",
+    "@types/node": "26.6.6",
     "oxfmt": "0.72.0",
     "oxlint": "1.87.0",
     "typescript": "7.0.2"

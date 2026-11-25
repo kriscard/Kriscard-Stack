@@ -1,15 +1,19 @@
 # CLAUDE.md
 
-Kriscard Stack opens interactive Pi with a skill-first workflow and an explicit Pi Durable execution backend.
+Kriscard Stack launches normal native Pi with Kriscard Mode and bundled workflow skills.
 
 ## Boundaries
 
-- `kriscard-mode` routes a request to one playbook.
-- `kstack-orchestrator` coordinates from the interactive Pi conversation and invokes the explicit Durable backend for approved execution. Inside that backend, Pi Durable owns worker conversations, scheduling, reporting and recovery.
-- Playbooks compose general-purpose skills from `kriscard/Skills`; never copy them here.
-- `packages/pi-runner` launches native Pi by default. Only its explicit `durable` command opens a Harness. Keep workflow policy in skills, not TypeScript. Native JSONL sessions and Durable SQLite state remain separate.
-- Git, GitHub, project files, and user-approved notes remain the workflow's ordinary sources of truth.
-- Follow Pi Durable's coding-agent, background-subagent and recovery examples. Report a demonstrated SDK limitation before proposing extra infrastructure; do not pre-empt hypothetical gaps.
+- `kriscard-mode` selects one playbook. Workflow policy stays in skills, not TypeScript.
+- Pi owns the interface, tools, extensions, models and native JSONL session.
+- Application code lives in `packages/kstack`; the package/CLI name is unchanged.
+- The previous Durable roles are checkpointed in `16d9ebb` and removed for a rebuild. Do not advertise role tools or background execution until replacement behavior is implemented and verified.
+- Native Pi owns intake, spec gates and repair decisions. The expanded agent-runtime vision requires new approved scope/design; the core-only spec is historical, not implementation authority.
+- Reuse official SDK mechanisms rather than another coordinator, transport or task/status ledger. Preserve old user data.
+- General-purpose skills remain owned by `kriscard/Skills`; never copy them here.
+- Preserve installer and skill-link ownership safeguards. OpenTUI is only for updates, with plain fallback.
+- SSH, Mosh and terminal-session management are external concerns.
+- Preserve existing user data and worktrees. Publication and destructive cleanup require explicit authority.
 
 ## Commands
 

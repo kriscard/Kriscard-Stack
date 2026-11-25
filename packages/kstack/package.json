@@ -1,7 +1,7 @@
 {
   "name": "@kriscard/kstack",
-  "version": "0.1.0",
-  "description": "Interactive Pi workflows with a Pi Durable execution backend.",
+  "version": "0.1.3",
+  "description": "Native Pi launcher with Kriscard workflow skills.",
   "bin": {
     "kriscard": "dist/bin.js",
     "kstack": "dist/bin.js"
@@ -22,18 +22,16 @@
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"require('node:fs').cpSync('../../skills/dev','dist/skills',{recursive:true})\"",
     "start": "node --enable-source-maps dist/bin.js",
+    "test": "node --test test/*.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@earendil-works/chord": "1.4.0",
-    "@earendil-works/pi-ai": "1.4.0",
     "@earendil-works/pi-coding-agent": "1.4.0",
-    "@earendil-works/pi-durable": "1.4.0",
-    "fs-ext": "2.1.1"
+    "@opentui/core": "0.7.0",
+    "web-tree-sitter": "0.25.10"
   },
   "devDependencies": {
-    "@types/fs-ext": "2.0.3",
-    "@types/node": "24.10.0",
+    "@types/node": "26.6.6",
     "typescript": "7.0.2"
   },
   "pi": {

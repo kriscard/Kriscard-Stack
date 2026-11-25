@@ -95,17 +95,18 @@ invocation or approved plan. Small, clear changes may proceed directly.
 
 Preserve explicit user gates for destructive actions, publishing, deployment, and merging.
 
-## Durable execution
+## Execution
 
-Kstack opens interactive Pi. Pi owns the interface, main conversation, tools and native JSONL
-session. Keep ordinary work in that conversation. This skill and its playbooks own the workflow.
+Kstack opens native Pi with its normal interface, tools, extensions and JSONL session.
+This skill and its playbooks own workflow selection. Planning and coordination stay in native Pi.
 
-For approved delegated execution, the Orchestration playbook uses `kstack-orchestrator` to invoke
-the explicit Pi Durable backend. The launcher advertises its exact command. Durable owns that
-execution's conversations, tools, background workers and recovery—not the interactive frontend.
-Native sessions and Durable SQLite files are separate and are not automatically converted.
-Reopen the same backend storage to resume pending SDK work; inspect interrupted unsafe effects
-before retrying them. Use only the capabilities actually supplied by the current host.
+The previous Durable role tools were removed for an example-based rebuild. Check actual host
+capabilities before promising role execution or delegation; report unavailable capabilities instead
+of invoking removed tools or inventing commands. Follow the installed implementation/review
+workflows and the requirements handoff above. Native Pi retains spec files and approval decisions.
+
+The target is visible, identifiable SDK agents with explicit workflow ownership; it is not an
+available runtime yet. SSH and terminal-session management remain external.
 
 Git, GitHub, project files, tests, and user-approved notes remain the ordinary sources of truth.
 
